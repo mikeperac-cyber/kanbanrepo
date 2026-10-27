@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/dev-cert.pfx
+build/dev-cert.cer
+*.log
+npm-debug.log*
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

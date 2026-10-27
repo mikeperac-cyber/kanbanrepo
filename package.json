@@ -1,0 +1,33 @@
+{
+  "name": "kanban-repo-cards",
+  "productName": "Kanban Repo Cards",
+  "version": "1.4.0",
+  "description": "A local four-account repository board with searchable notes and checklists.",
+  "main": "main.js",
+  "author": "Michael Daniel",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "electron .",
+    "icons": "python tools/make-icons.py",
+    "smoke": "node tools/smoke-test.js",
+    "dist": "npm run icons && electron-builder --win nsis appx --config electron-builder.config.js",
+    "dist:exe": "npm run icons && electron-builder --win nsis --config electron-builder.config.js",
+    "dist:store": "npm run icons && electron-builder --win appx --config electron-builder.config.js",
+    "cert:dev": "powershell -ExecutionPolicy Bypass -File tools/make-dev-cert.ps1"
+  },
+  "keywords": [
+    "kanban",
+    "electron",
+    "desktop",
+    "repos",
+    "microsoft-store"
+  ],
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  }
+}
