@@ -51,7 +51,9 @@ const bridge = window.api ?? {
     window.open(url, '_blank', 'noopener');
     return { ok: true };
   },
-  appInfo: async () => ({ version: '1.4.0', store: false }),
+  // No version here on purpose — the header stays blank in a plain browser
+  // instead of showing a value that drifts from package.json.
+  appInfo: async () => ({}),
   fetchGithubRepos: async () => [],
 };
 
@@ -404,7 +406,10 @@ function repoMatchesFilters(repo) {
   ]
     .join(' ')
     .toLowerCase();
-  return searchable.includes(query);
+  // Each token must appear somewhere on its own; joining fields with spaces
+  // means a token can still straddle a field boundary, which is acceptable,
+  // but splitting lets "note url" style queries behave like AND search.
+  return query.split(/\s+/).every((token) => searchable.includes(token));
 }
 
 function makeRepoRecord(url, extra = {}) {
@@ -1605,6 +1610,17 @@ function init() {
       /* best effort */
     }
   });
+
+  // Belt and braces: flush a pending debounced save the moment the window is
+  // hidden or closed. Chromium throttles timers in hidden windows, so waiting
+  // for the 400 ms debounce there could postpone the write indefinitely.
+  const flushIfDirty = () => {
+    if (dirty || saveTimer) persistNow();
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushIfDirty();
+  });
+  window.addEventListener('pagehide', flushIfDirty);
 }
 
 init();

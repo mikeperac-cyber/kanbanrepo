@@ -82,6 +82,11 @@ function createWindow() {
       sandbox: true,
       webviewTag: false,
       spellcheck: true,
+      // Debounced localStorage writes are delayed by Chromium's background
+      // timer throttling when the window is hidden, which can postpone a
+      // pending save for a long time. Nothing in this app benefits from
+      // throttling, so turn it off for reliable persistence.
+      backgroundThrottling: false,
     },
   });
 
@@ -188,6 +193,7 @@ ipcMain.handle('app-info', () => ({
 
 // GitHub API integration — fetch repos for a username.
 const GITHUB_USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const GITHUB_MAX_PAGES = 10; // 10 × 100 = 1000 repos, enough for any account
 
 ipcMain.handle(
   'github:fetch-repos',
@@ -198,7 +204,6 @@ ipcMain.handle(
     }
 
     const token = process.env.GITHUB_TOKEN;
-    const url = `https://api.github.com/users/${encodeURIComponent(handle)}/repos?per_page=100&sort=pushed`;
     const headers = {
       Accept: 'application/vnd.github+json',
       'User-Agent': 'Kanban-Repo-Cards',
@@ -207,11 +212,20 @@ ipcMain.handle(
       headers.Authorization = `token ${token}`;
     }
 
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      throw new Error(`GitHub API ${res.status}: ${res.statusText}`);
+    // Page through the account so repos beyond the first 100 are included.
+    const allRepos = [];
+    for (let page = 1; page <= GITHUB_MAX_PAGES; page += 1) {
+      const url = `https://api.github.com/users/${encodeURIComponent(handle)}/repos?per_page=100&sort=pushed&page=${page}`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) {
+        throw new Error(`GitHub API ${res.status}: ${res.statusText}`);
+      }
+      const batch = await res.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allRepos.push(...batch);
+      if (batch.length < 100) break; // last page
     }
-    return res.json();
+    return allRepos;
   }
 );
 
