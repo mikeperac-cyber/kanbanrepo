@@ -1,0 +1,12 @@
+# Normalize line endings: text is stored as LF in the repo and checked out as
+# LF everywhere, so diffs and blames stay consistent across platforms.
+* text=auto eol=lf
+
+# Windows shell scripts must keep CRLF — cmd.exe and older PowerShell hosts
+# can misparse LF-only scripts.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Never convert binary assets.
+*.ico binary
+*.png binary
