@@ -35,6 +35,7 @@
               <option value="pinnedFirst">Pinned first</option>
               <option value="recentlyUpdated">Recently updated</option>
               <option value="oldest">Oldest first</option>
+              <option value="manual">Manual order</option>
               <option value="name">Name A–Z</option>
             </select>
             <svg class="select-chevron" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -67,6 +68,9 @@
       </header>
 
       <aside class="sidebar" aria-label="Accounts">
+        <h2 class="sidebar-title">Boards</h2>
+        <div class="board-list" id="board-list"></div>
+        <button class="board-new" id="board-new" type="button" title="Create another board">+ New board</button>
         <h2 class="sidebar-title">Accounts</h2>
         <button
           class="account-tile account-tile-all"
@@ -115,6 +119,16 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="bulk-bar" id="bulk-bar" hidden>
+      <span class="bulk-count" id="bulk-count">0 selected</span>
+      <button class="bulk-btn" id="bulk-pin" type="button">Pin</button>
+      <button class="bulk-btn" id="bulk-unpin" type="button">Unpin</button>
+      <button class="bulk-btn" id="bulk-archive" type="button">Archive</button>
+      <select class="bulk-btn bulk-move" id="bulk-move" aria-label="Move selected repos to column"></select>
+      <button class="bulk-btn is-danger" id="bulk-remove" type="button">Remove</button>
+      <button class="bulk-btn" id="bulk-clear" type="button">Clear</button>
+    </div>
 
     <div class="row-menu" id="row-menu" role="menu" hidden></div>
 
@@ -287,6 +301,27 @@
           <span class="dialog-spacer"></span>
           <button class="btn-ghost" id="column-cancel" type="button">Cancel</button>
           <button class="btn-primary" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="repo-dialog" id="board-dialog" aria-labelledby="board-dialog-title">
+      <form class="repo-form" id="board-form" novalidate>
+        <header class="dialog-head">
+          <div>
+            <h2 id="board-dialog-title">New board</h2>
+            <p class="dialog-sub">A separate workspace with its own columns and repos.</p>
+          </div>
+          <button class="dialog-close" id="board-dialog-close" type="button" aria-label="Close">&times;</button>
+        </header>
+        <label class="field">
+          <span class="field-label">Board name</span>
+          <input class="field-input" id="board-label" type="text" maxlength="40" placeholder="e.g. Work, OSS" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="dialog-actions">
+          <span class="dialog-spacer"></span>
+          <button class="btn-ghost" id="board-cancel" type="button">Cancel</button>
+          <button class="btn-primary" type="submit">Create</button>
         </div>
       </form>
     </dialog>

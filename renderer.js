@@ -81,6 +81,7 @@ let saveTimer = null;
 let dirty = false;
 let toastTimer = null;
 let dragData = null;
+const selection = new Set(); // "cardId:repoId" keys for bulk actions
 
 function nowIso() {
   return new Date().toISOString();
@@ -104,8 +105,11 @@ function emptyState() {
   return {
     version: 3,
     view: { ...view },
+    activeBoardId: 'main',
+    activeBoardLabel: 'Main board',
     columns: CARD_DEFS.map((def) => ({ ...def })),
     cards,
+    boards: [],
   };
 }
 
@@ -188,49 +192,31 @@ function sanitizeRepo(incoming) {
   };
 }
 
-function sanitizeState(raw) {
-  const next = emptyState();
-  if (!raw || typeof raw !== 'object' || !raw.cards || typeof raw.cards !== 'object') {
-    return next;
+function sanitizeColumns(rawColumns) {
+  const seen = new Set();
+  const columns = [];
+  for (const col of (Array.isArray(rawColumns) ? rawColumns : []).slice(0, 12)) {
+    const id =
+      typeof col?.id === 'string' && /^[a-z0-9][a-z0-9-]{0,38}$/i.test(col.id)
+        ? col.id.toLowerCase()
+        : '';
+    const label = typeof col?.label === 'string' ? col.label.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+    if (!id || !label || seen.has(id)) continue;
+    seen.add(id);
+    columns.push({ id, label, accent: ACCENT_HEX[col.accent] ? col.accent : 'indigo' });
   }
+  return columns;
+}
 
-  if (raw.view && typeof raw.view === 'object') {
-    next.view = {
-      ...next.view,
-      searchQuery: typeof raw.view.searchQuery === 'string' ? raw.view.searchQuery.slice(0, 120) : '',
-      sortBy: ['pinnedFirst', 'recentlyUpdated', 'oldest', 'name'].includes(raw.view.sortBy)
-        ? raw.view.sortBy
-        : 'pinnedFirst',
-      showArchived: Boolean(raw.view.showArchived),
-      pinnedOnly: Boolean(raw.view.pinnedOnly),
-    };
-  }
-
-  // Columns: persisted since v3.1; missing/invalid entries fall back to the
-  // default four accounts so older states keep working untouched.
-  if (Array.isArray(raw.columns)) {
-    const seen = new Set();
-    const columns = [];
-    for (const col of raw.columns.slice(0, 12)) {
-      const id =
-        typeof col?.id === 'string' && /^[a-z0-9][a-z0-9-]{0,38}$/i.test(col.id)
-          ? col.id.toLowerCase()
-          : '';
-      const label = typeof col?.label === 'string' ? col.label.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
-      if (!id || !label || seen.has(id)) continue;
-      seen.add(id);
-      columns.push({ id, label, accent: ACCENT_HEX[col.accent] ? col.accent : 'indigo' });
-    }
-    if (columns.length) next.columns = columns;
-  }
-
-  for (const def of next.columns) {
-    if (!next.cards[def.id]) next.cards[def.id] = { note: '', color: null, repos: [] };
-    const incoming = raw.cards[def.id];
+function sanitizeCards(rawCards, columns) {
+  const cards = {};
+  for (const def of columns) {
+    cards[def.id] = { note: '', color: null, repos: [] };
+    const incoming = rawCards?.[def.id];
     if (!incoming || typeof incoming !== 'object') continue;
 
-    if (typeof incoming.note === 'string') next.cards[def.id].note = incoming.note.slice(0, MAX_NOTE_LENGTH);
-    next.cards[def.id].color = sanitizeHex(incoming.color);
+    if (typeof incoming.note === 'string') cards[def.id].note = incoming.note.slice(0, MAX_NOTE_LENGTH);
+    cards[def.id].color = sanitizeHex(incoming.color);
 
     // v2 uses `repos`; v1 used `urls: string[]`.
     const source = Array.isArray(incoming.repos)
@@ -249,8 +235,60 @@ function sanitizeState(raw) {
       seenUrls.add(urlKey);
       if (seenIds.has(repo.id)) repo.id = newRepoId();
       seenIds.add(repo.id);
-      next.cards[def.id].repos.push(repo);
+      cards[def.id].repos.push(repo);
     }
+  }
+  return cards;
+}
+
+function sanitizeState(raw) {
+  const next = emptyState();
+  if (!raw || typeof raw !== 'object' || !raw.cards || typeof raw.cards !== 'object') {
+    return next;
+  }
+
+  if (raw.view && typeof raw.view === 'object') {
+    next.view = {
+      ...next.view,
+      searchQuery: typeof raw.view.searchQuery === 'string' ? raw.view.searchQuery.slice(0, 120) : '',
+      sortBy: ['pinnedFirst', 'recentlyUpdated', 'oldest', 'name', 'manual'].includes(raw.view.sortBy)
+        ? raw.view.sortBy
+        : 'pinnedFirst',
+      showArchived: Boolean(raw.view.showArchived),
+      pinnedOnly: Boolean(raw.view.pinnedOnly),
+    };
+  }
+
+  // Columns: persisted since v3.1; missing/invalid entries fall back to the
+  // default four accounts so older states keep working untouched.
+  const columns = sanitizeColumns(raw.columns);
+  if (columns.length) next.columns = columns;
+  next.cards = sanitizeCards(raw.cards, next.columns);
+
+  // Boards: persisted since v3.3 — inactive workspaces beyond the active one.
+  if (Array.isArray(raw.boards)) {
+    const seenIds = new Set([next.activeBoardId]);
+    const boards = [];
+    for (const board of raw.boards.slice(0, 5)) {
+      const label =
+        typeof board?.label === 'string' ? board.label.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+      if (!label) continue;
+      const id =
+        typeof board?.id === 'string' && /^[a-z0-9][a-z0-9-]{0,38}$/i.test(board.id) && !seenIds.has(board.id)
+          ? board.id
+          : '';
+      if (!id) continue;
+      seenIds.add(id);
+      const boardColumns = sanitizeColumns(board.columns);
+      if (!boardColumns.length) continue;
+      boards.push({
+        id,
+        label,
+        columns: boardColumns,
+        cards: sanitizeCards(board.cards, boardColumns),
+      });
+    }
+    next.boards = boards;
   }
 
   return next;
@@ -743,6 +781,7 @@ function createRepoRow(cardId, repo) {
   const isOpen = Boolean(entry?.expanded.has(repo.id));
   detail.hidden = !isOpen;
   row.classList.toggle('is-open', isOpen);
+  row.classList.toggle('is-selected', selection.has(selectionKey(cardId, repo.id)));
   expand.setAttribute('aria-expanded', String(isOpen));
   expand.setAttribute('aria-label', isOpen ? 'Hide checklist and notes' : 'Show checklist and notes');
 
@@ -808,6 +847,12 @@ function createRepoRow(cardId, repo) {
   expand.addEventListener('click', () => toggleRepoExpanded(cardId, repo.id));
   row.addEventListener('click', (event) => {
     if (event.target.closest('button, input, textarea, .repo-note')) return;
+    // Ctrl/Cmd+click toggles bulk selection instead of expanding.
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      toggleRowSelection(cardId, repo.id);
+      return;
+    }
     toggleRepoExpanded(cardId, repo.id);
   });
 
@@ -815,7 +860,9 @@ function createRepoRow(cardId, repo) {
 }
 
 function sortRepos(list) {
-  if (view.sortBy === 'pinnedFirst') {
+  if (view.sortBy === 'manual') {
+    // Array order is user order; nothing to do.
+  } else if (view.sortBy === 'pinnedFirst') {
     list.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
   } else if (view.sortBy === 'recentlyUpdated') {
     list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -1010,7 +1057,9 @@ function renderAll() {
   renderTagBar();
   renderTagSuggestions();
   board.classList.toggle('is-single', Boolean(openCardId));
+  renderBoardSwitcher();
   renderStats();
+  updateBulkBar();
   archiveToggle.setAttribute('aria-pressed', String(view.showArchived));
   archiveToggle.textContent = view.showArchived ? 'Hide archived' : 'Show archived';
   pinnedToggle.setAttribute('aria-pressed', String(view.pinnedOnly));
@@ -1252,10 +1301,17 @@ function clearAllDropStates() {
 
 function handleDragOver(event, def, node) {
   if (dragData) {
-    if (dragData.cardId === def.id) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    node.dataset.dropLabel = 'Drop to move here';
+    if (dragData.cardId === def.id) {
+      // Reordering within the same column is only meaningful in manual order.
+      if (view.sortBy !== 'manual') return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      node.dataset.dropLabel = 'Drop to reorder';
+    } else {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      node.dataset.dropLabel = 'Drop to move here';
+    }
   } else {
     const types = Array.from(event.dataTransfer?.types ?? []);
     if (!types.includes('text/uri-list') && !types.includes('text/plain')) return;
@@ -1274,7 +1330,12 @@ function handleDrop(event, def, node) {
   dragData = null;
 
   if (payload) {
-    if (payload.cardId === def.id) return;
+    if (payload.cardId === def.id) {
+      // Same-column drop: reorder in manual mode, otherwise a no-op.
+      if (view.sortBy !== 'manual') return;
+      reorderWithinColumn(def.id, payload.repoId, event.clientY);
+      return;
+    }
     const sourceRepos = state.cards[payload.cardId].repos;
     const index = sourceRepos.findIndex((repo) => repo.id === payload.repoId);
     if (index === -1) return;
@@ -1320,6 +1381,160 @@ function handleDrop(event, def, node) {
   renderAll();
   scheduleSave();
   showToast(`Added to ${def.label}`);
+}
+
+/* ---------- Bulk selection and actions ---------- */
+
+const selectionKey = (cardId, repoId) => `${cardId}:${repoId}`;
+
+function toggleRowSelection(cardId, repoId) {
+  const key = selectionKey(cardId, repoId);
+  if (selection.has(key)) selection.delete(key);
+  else selection.add(key);
+  renderAll();
+}
+
+function clearSelection() {
+  if (!selection.size) return;
+  selection.clear();
+  renderAll();
+}
+
+function selectedRepos() {
+  const found = [];
+  for (const key of selection) {
+    const [cardId, repoId] = key.split(/:(?=[^:]+$)/);
+    const repo = findRepo(cardId, repoId);
+    if (repo) found.push({ cardId, repo });
+    else selection.delete(key);
+  }
+  return found;
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  if (!bar) return;
+  const count = selection.size;
+  bar.hidden = count === 0;
+  if (!count) return;
+  document.getElementById('bulk-count').textContent = `${count} selected`;
+  const moveSelect = document.getElementById('bulk-move');
+  moveSelect.textContent = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Move to…';
+  moveSelect.appendChild(placeholder);
+  for (const def of state.columns) {
+    const option = document.createElement('option');
+    option.value = def.id;
+    option.textContent = def.label;
+    moveSelect.appendChild(option);
+  }
+}
+
+function bulkSetPinned(pinned) {
+  const items = selectedRepos();
+  for (const { repo } of items) {
+    repo.pinned = pinned;
+    repo.updatedAt = nowIso();
+  }
+  renderAll();
+  scheduleSave();
+  showToast(`${pinned ? 'Pinned' : 'Unpinned'} ${items.length} repo${items.length === 1 ? '' : 's'}`);
+  clearSelection();
+}
+
+function bulkSetArchived(archived) {
+  const items = selectedRepos();
+  for (const { repo } of items) {
+    repo.archived = archived;
+    repo.updatedAt = nowIso();
+  }
+  renderAll();
+  scheduleSave();
+  showToast(`${archived ? 'Archived' : 'Restored'} ${items.length} repo${items.length === 1 ? '' : 's'}`);
+  clearSelection();
+}
+
+function bulkMove(cardId) {
+  const items = selectedRepos().filter((item) => item.cardId !== cardId);
+  if (!items.length) {
+    showToast('Select repos from other columns to move them');
+    return;
+  }
+  const targetRepos = state.cards[cardId].repos;
+  let moved = 0;
+  for (const { cardId: fromId, repo } of items) {
+    if (targetRepos.some((existing) => sameUrl(existing.url, repo.url))) continue;
+    const sourceRepos = state.cards[fromId].repos;
+    sourceRepos.splice(sourceRepos.findIndex((entry) => entry.id === repo.id), 1);
+    targetRepos.push(repo);
+    refs.get(fromId)?.expanded.delete(repo.id);
+    selection.delete(selectionKey(fromId, repo.id));
+    moved += 1;
+  }
+  renderAll();
+  scheduleSave();
+  showToast(moved ? `Moved ${moved} repo${moved === 1 ? '' : 's'} to ${state.columns.find((col) => col.id === cardId)?.label ?? cardId}` : 'Those repos already exist there');
+}
+
+function bulkRemove() {
+  const items = selectedRepos();
+  if (!items.length) return;
+  for (const { cardId, repo } of items) {
+    const repos = state.cards[cardId].repos;
+    const index = repos.findIndex((entry) => entry.id === repo.id);
+    if (index !== -1) repos.splice(index, 1);
+    refs.get(cardId)?.expanded.delete(repo.id);
+    selection.delete(selectionKey(cardId, repo.id));
+  }
+  lastDeleted = items.length === 1
+    ? { cardId: items[0].cardId, repo: items[0].repo, index: null, todoIndex: null }
+    : null;
+  renderAll();
+  scheduleSave();
+  showToast(items.length === 1 ? 'Removed' : `Removed ${items.length} repos`, items.length === 1 ? { label: 'Undo', run: restoreLastDeleted } : null);
+}
+
+function wireBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  if (!bar) return;
+  document.getElementById('bulk-pin').addEventListener('click', () => bulkSetPinned(true));
+  document.getElementById('bulk-unpin').addEventListener('click', () => bulkSetPinned(false));
+  document.getElementById('bulk-archive').addEventListener('click', () => bulkSetArchived(true));
+  document.getElementById('bulk-remove').addEventListener('click', bulkRemove);
+  document.getElementById('bulk-clear').addEventListener('click', clearSelection);
+  document.getElementById('bulk-move').addEventListener('change', (event) => {
+    const target = event.target.value;
+    event.target.value = '';
+    if (target) bulkMove(target);
+  });
+}
+
+/* ---------- Manual reorder ---------- */
+
+function reorderWithinColumn(cardId, repoId, clientY) {
+  const repos = state.cards[cardId].repos;
+  const fromIndex = repos.findIndex((repo) => repo.id === repoId);
+  if (fromIndex === -1) return;
+  const [repo] = repos.splice(fromIndex, 1);
+
+  // Insert before the first visible row whose midpoint is below the cursor.
+  const rows = [...(refs.get(cardId)?.list.querySelectorAll('.repo') ?? [])];
+  let insertAt = repos.length;
+  for (const row of rows) {
+    if (row.dataset.repoId === repoId) continue;
+    const rect = row.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      const targetId = row.dataset.repoId;
+      insertAt = repos.findIndex((entry) => entry.id === targetId);
+      if (insertAt === -1) insertAt = repos.length;
+      break;
+    }
+  }
+  repos.splice(insertAt, 0, repo);
+  renderAll();
+  scheduleSave();
 }
 
 /* ---------- Repo details dialog ---------- */
@@ -1604,6 +1819,120 @@ async function initAppInfo() {
   } catch {
     /* keep defaults */
   }
+}
+
+/* ---------- Multi-board workspaces ---------- */
+
+function renderBoardSwitcher() {
+  const list = document.getElementById('board-list');
+  if (!list) return;
+  list.textContent = '';
+  const tiles = [
+    { id: state.activeBoardId, label: state.activeBoardLabel, active: true },
+    ...state.boards.map((board) => ({ id: board.id, label: board.label, active: false })),
+  ];
+  for (const tile of tiles) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'board-tile' + (tile.active ? ' is-active' : '');
+    button.textContent = tile.label;
+    button.title = tile.active ? 'Current board' : `Switch to ${tile.label}`;
+    button.addEventListener('click', () => {
+      if (!tile.active) switchBoard(tile.id);
+    });
+
+    if (!tile.active) {
+      const remove = document.createElement('span');
+      remove.className = 'board-remove';
+      remove.textContent = '×';
+      remove.title = `Delete ${tile.label}`;
+      remove.setAttribute('role', 'button');
+      remove.setAttribute('aria-label', `Delete board ${tile.label}`);
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (window.confirm(`Delete the board "${tile.label}" and all of its repos?`)) {
+          removeBoard(tile.id);
+        }
+      });
+      button.appendChild(remove);
+    }
+    list.appendChild(button);
+  }
+}
+
+function switchBoard(boardId) {
+  const target = state.boards.find((board) => board.id === boardId);
+  if (!target) return;
+  const current = {
+    id: state.activeBoardId,
+    label: state.activeBoardLabel,
+    columns: state.columns,
+    cards: state.cards,
+  };
+  state.boards = [
+    ...state.boards.filter((board) => board.id !== boardId),
+    current,
+  ];
+  state.activeBoardId = target.id;
+  state.activeBoardLabel = target.label;
+  state.columns = target.columns;
+  state.cards = target.cards;
+  state.boards = state.boards.filter((board) => board.id !== boardId);
+  openCardId = null;
+  selection.clear();
+  activeTag = null;
+  rebuildBoard();
+  scheduleSave();
+  showToast(`Switched to ${target.label}`);
+}
+
+function createBoard(label) {
+  const clean = String(label ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!clean) return false;
+  if (state.boards.length >= 5) {
+    showToast('A workspace can have up to 6 boards');
+    return false;
+  }
+  const taken = new Set([state.activeBoardId, ...state.boards.map((board) => board.id)]);
+  const id = slugifyColumnId(clean, taken);
+  const firstColumn = { id: 'general', label: 'General', accent: 'indigo' };
+  state.boards.push({
+    id,
+    label: clean,
+    columns: [firstColumn],
+    cards: { general: { note: '', color: null, repos: [] } },
+  });
+  scheduleSave();
+  renderBoardSwitcher();
+  showToast(`Created board ${clean}`);
+  return true;
+}
+
+function removeBoard(boardId) {
+  const board = state.boards.find((entry) => entry.id === boardId);
+  if (!board) return;
+  state.boards = state.boards.filter((entry) => entry.id !== boardId);
+  scheduleSave();
+  renderBoardSwitcher();
+  showToast(`Deleted ${board.label}`);
+}
+
+function wireBoardSwitcher() {
+  document.getElementById('board-new')?.addEventListener('click', () => {
+    const label = document.getElementById('board-label');
+    const dialog = document.getElementById('board-dialog');
+    label.value = '';
+    dialog.showModal();
+    window.setTimeout(() => label.focus(), 30);
+  });
+  const dialog = document.getElementById('board-dialog');
+  document.getElementById('board-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const label = document.getElementById('board-label').value;
+    if (createBoard(label)) dialog.close();
+  });
+  document.getElementById('board-cancel').addEventListener('click', () => dialog.close());
+  document.getElementById('board-dialog-close').addEventListener('click', () => dialog.close());
 }
 
 /* ---------- Configurable columns ---------- */
@@ -2294,6 +2623,8 @@ function init() {
   wireRowContextMenu();
   wireColumnDialog();
   wireTagManager();
+  wireBulkBar();
+  wireBoardSwitcher();
   notifyDueRepos();
 
   window.addEventListener('beforeunload', () => {

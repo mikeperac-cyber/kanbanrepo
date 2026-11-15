@@ -212,7 +212,7 @@ async function main() {
         tiles: tiles.length,
         tileCounts: tiles.map((tile) => tile.querySelector('.account-count').textContent),
         tileSubs: tiles.map((tile) => tile.querySelector('.account-sub').textContent),
-        sidebarTitle: document.querySelector('.sidebar-title')?.textContent ?? '',
+        sidebarTitle: [...document.querySelectorAll('.sidebar-title')].map((node) => node.textContent),
         addInputs: columns.filter((column) => column.querySelector('.add-input')).length,
         accountNotes: columns.filter(
           (column) => column.querySelector('.note')?.getAttribute('contenteditable') === 'plaintext-only'
@@ -248,7 +248,11 @@ async function main() {
         JSON.stringify(shell.tileNames) === JSON.stringify(['All accounts', ...CARD_NAMES]),
       JSON.stringify(shell.tileNames)
     );
-    check('sidebar is labelled as an account panel', /account/i.test(shell.sidebarTitle), shell.sidebarTitle);
+    check(
+      'sidebar is labelled as an account panel',
+      shell.sidebarTitle.some((title) => /account/i.test(title)),
+      JSON.stringify(shell.sidebarTitle)
+    );
     check(
       'sidebar shows a live repo count per account',
       shell.tileCounts.every((count) => count === '0'),
@@ -1585,6 +1589,167 @@ async function main() {
       JSON.stringify(tagFlow)
     );
     await evaluate(`document.getElementById('tags-dialog').close()`);
+
+    // ---- 20. Manual reorder and bulk actions -------------------------------
+    // Ensure two repos in mikelb, then switch to manual order and swap them.
+    const reorder = await evaluate(`(() => {
+      const out = {};
+      const column = document.querySelector('.column[data-card-id=\"mikelb\"]');
+      while (column.querySelectorAll('.repo').length < 2) {
+        const input = column.querySelector('.add-input');
+        input.value =
+          column.querySelectorAll('.repo').length === 0
+            ? 'https://github.com/nodejs/node'
+            : 'https://github.com/facebook/react';
+        column.querySelector('.add-form').requestSubmit();
+      }
+      const select = document.getElementById('repo-sort');
+      select.value = 'manual';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      out.before = [...column.querySelectorAll('.repo-title')].map((el) => el.textContent);
+      const firstRow = column.querySelector('.repo');
+      const secondRow = column.querySelectorAll('.repo')[1];
+      const grip = secondRow.querySelector('.repo-grip');
+      const transfer = new DataTransfer();
+      grip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
+      firstRow.dispatchEvent(
+        new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer })
+      );
+      const rect = firstRow.getBoundingClientRect();
+      secondRow.dispatchEvent(
+        new DragEvent('drop', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+          clientY: rect.top + rect.height / 2,
+        })
+      );
+      out.after = [...document.querySelectorAll('.column[data-card-id=\"mikelb\"] .repo-title')].map(
+        (el) => el.textContent
+      );
+      return out;
+    })()`);
+    await delay(600);
+    check(
+      'manual order allows dragging a repo within its column',
+      reorder.before.length === 2 &&
+        reorder.after.length === 2 &&
+        reorder.after[1] === reorder.before[0] &&
+        reorder.after[0] === reorder.before[1],
+      JSON.stringify(reorder)
+    );
+
+    // Bulk: Ctrl+click both rows in mikelb, pin them, clear selection.
+    const bulk = await evaluate(`(() => {
+      const out = {};
+      const column = document.querySelector('.column[data-card-id=\"mikelb\"]');
+      const rows = [...column.querySelectorAll('.repo')];
+      for (const row of rows) {
+        row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      }
+      out.barVisible = !document.getElementById('bulk-bar').hidden;
+      out.count = document.getElementById('bulk-count').textContent;
+      document.getElementById('bulk-pin').click();
+      out.starPressed = column.querySelector('.repo .repo-star')?.getAttribute('aria-pressed');
+      return out;
+    })()`);
+    await delay(600);
+
+    const bulkStored = await evaluate(`(() => {
+      const pinned = JSON.parse(localStorage.getItem('${STORAGE_KEY}') || 'null');
+      return (pinned?.cards?.mikelb?.repos ?? []).filter((repo) => repo.pinned).length;
+    })()`);
+    await delay(600);
+    check(
+      'ctrl-click selects rows and shows the bulk bar',
+      bulk.barVisible === true && bulk.count === '2 selected',
+      JSON.stringify(bulk)
+    );
+    check(
+      'bulk pin applies to all selected repos',
+      bulk.starPressed === 'true' && bulkStored === 2,
+      `${JSON.stringify(bulk)} stored=${bulkStored}`
+    );
+
+    const bulkClear = await evaluate(`(() => {
+      document.getElementById('bulk-clear').click();
+      return document.getElementById('bulk-bar').hidden;
+    })()`);
+    check('clearing selection hides the bulk bar', bulkClear === true);
+
+    // ---- 21. Multi-board workspaces ----------------------------------------
+    const boardFlow = await evaluate(`(() => {
+      const out = {};
+      out.tilesInitial = [...document.querySelectorAll('.board-tile')].map((tile) => tile.textContent.replace('×', ''));
+      document.getElementById('board-new').click();
+      const dialog = document.getElementById('board-dialog');
+      out.dialogOpen = dialog.open;
+      document.getElementById('board-label').value = 'Side Work';
+      document.getElementById('board-form').requestSubmit();
+      out.tilesAfterCreate = [...document.querySelectorAll('.board-tile')].map((tile) => tile.textContent.replace('×', ''));
+      out.columnsStill = document.querySelectorAll('.column').length;
+      // switch to the new board
+      [...document.querySelectorAll('.board-tile')].find((tile) => tile.textContent.includes('Side Work')).click();
+      out.columnsOnNewBoard = document.querySelectorAll('.column').length;
+      out.newColumnTitle = document.querySelector('.column-title')?.textContent ?? '';
+      // add a repo there
+      const input = document.querySelector('.column[data-card-id=\"general\"] .add-input');
+      input.value = 'https://github.com/expressjs/express';
+      document.querySelector('.column[data-card-id=\"general\"] .add-form').requestSubmit();
+      out.reposOnNewBoard = document.querySelectorAll('.column[data-card-id=\"general\"] .repo').length;
+      // switch back
+      [...document.querySelectorAll('.board-tile')].find((tile) => tile.textContent.includes('Main board')).click();
+      out.columnsBack = document.querySelectorAll('.column').length;
+      return out;
+    })()`);
+    await delay(600);
+
+    const boardStored = await evaluate(`(() => {
+      const stored = JSON.parse(localStorage.getItem('${STORAGE_KEY}') || 'null');
+      return {
+        active: stored?.activeBoardId,
+        boards: (stored?.boards ?? []).map((board) => ({ id: board.id, repos: Object.values(board.cards).reduce((sum, card) => sum + card.repos.length, 0) })),
+        mainRepos: Object.values(stored?.cards ?? {}).reduce((sum, card) => sum + card.repos.length, 0),
+      };
+    })()`);
+    check(
+      'creating a board adds a switcher tile without touching columns',
+      boardFlow.dialogOpen === true &&
+        boardFlow.tilesInitial.length === 1 &&
+        boardFlow.tilesAfterCreate.length === 2 &&
+        boardFlow.columnsStill === 4,
+      JSON.stringify(boardFlow)
+    );
+    check(
+      'switching boards swaps columns and isolates repos',
+      boardFlow.columnsOnNewBoard === 1 &&
+        boardFlow.newColumnTitle === 'General' &&
+        boardFlow.reposOnNewBoard === 1 &&
+        boardFlow.columnsBack === 4,
+      JSON.stringify(boardFlow)
+    );
+    check(
+      'each board persists its own repos',
+      boardStored.active === 'main' &&
+        boardStored.mainRepos === 3 && // 1 on michaeldaniel + 2 on mikelb from earlier sections
+        boardStored.boards.length === 1 &&
+        boardStored.boards[0].repos === 1,
+      JSON.stringify(boardStored)
+    );
+
+    // Delete the side board (confirm dialog auto-accept).
+    const boardDelete = await evaluate(`(() => {
+      window.confirm = () => true;
+      const tile = [...document.querySelectorAll('.board-tile')].find((node) => node.textContent.includes('Side Work'));
+      tile.querySelector('.board-remove').click();
+      return [...document.querySelectorAll('.board-tile')].map((node) => node.textContent.replace('×', ''));
+    })()`);
+    await delay(600);
+    check(
+      'boards can be deleted from the switcher',
+      boardDelete.length === 1 && boardDelete[0] === 'Main board',
+      JSON.stringify(boardDelete)
+    );
 
     // ---- 18. Console cleanliness ----------------------------------------------
     check(

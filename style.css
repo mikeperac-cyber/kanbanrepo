@@ -2424,3 +2424,130 @@ button {
   font-size: var(--text-sm);
   color: var(--muted);
 }
+
+/* ============================================================
+   Bulk selection bar and selected rows
+   ============================================================ */
+
+.repo.is-selected {
+  border-color: var(--accent-indigo);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-indigo) 35%, transparent);
+}
+
+.bulk-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 46px;
+  z-index: 55;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-pop);
+}
+
+.bulk-count {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text);
+  padding-right: var(--space-1);
+}
+
+.bulk-btn {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.bulk-btn:hover {
+  background: var(--surface-hover);
+}
+
+.bulk-btn.is-danger {
+  color: var(--danger);
+}
+
+.bulk-move {
+  appearance: none;
+  max-width: 140px;
+}
+/* ============================================================
+   Board switcher (multi-board workspaces)
+   ============================================================ */
+
+.board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.board-tile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 10px;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-soft);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.board-tile:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.board-tile.is-active {
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.board-remove {
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: var(--text-base);
+  line-height: 1;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+.board-remove:hover {
+  color: var(--danger);
+}
+
+.board-new {
+  width: 100%;
+  margin: var(--space-2) 0 var(--space-4);
+  padding: 7px 10px;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: left;
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.board-new:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+  background: var(--surface-2);
+}
