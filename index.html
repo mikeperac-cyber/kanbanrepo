@@ -120,6 +120,8 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <div class="repo-detail-overlay" id="repo-detail-overlay" hidden></div>
+
     <div class="bulk-bar" id="bulk-bar" hidden>
       <span class="bulk-count" id="bulk-count">0 selected</span>
       <button class="bulk-btn" id="bulk-pin" type="button">Pin</button>
@@ -257,6 +259,7 @@
           <div class="detail-head">
             <span>Checklist</span>
             <span class="todo-count"></span>
+            <button class="detail-view-btn" type="button" title="Open the full-page detail view">Full view</button>
           </div>
           <ul class="todo-list"></ul>
           <div class="todo-empty">No tasks yet</div>

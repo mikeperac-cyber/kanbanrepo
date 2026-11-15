@@ -1751,6 +1751,57 @@ async function main() {
       JSON.stringify(boardDelete)
     );
 
+    // ---- 22. Repo detail view ----------------------------------------------
+    const detail = await evaluate(`(() => {
+      const out = {};
+      let row = document.querySelector('.column[data-card-id=\"michaeldaniel\"] .repo');
+      out.rowFound = Boolean(row);
+      row.querySelector('.repo-expand').click();
+      // renderColumn rebuilds rows, so re-query for the button.
+      const btn = document.querySelector('.column[data-card-id=\"michaeldaniel\"] .repo .detail-view-btn');
+      out.buttonPresent = Boolean(btn);
+      btn.click();
+      const overlay = document.getElementById('repo-detail-overlay');
+      out.overlayOpen = !overlay.hidden;
+      out.hasTitle = Boolean(overlay.querySelector('.detail-page-head h2'));
+      out.hasNotes = Boolean(overlay.querySelector('.detail-notes'));
+      out.hasChecklist = Boolean(overlay.querySelector('.detail-todo-form'));
+      out.hasActivity = Boolean(overlay.querySelector('.detail-activity'));
+      out.chips = overlay.querySelectorAll('.detail-chip').length;
+      const notes = overlay.querySelector('.detail-notes');
+      notes.value = 'Detail view note';
+      notes.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      notes.dispatchEvent(new Event('blur'));
+      return out;
+    })()`);
+    await delay(600);
+
+    const detailStored = await evaluate(`(() => {
+      const stored = JSON.parse(localStorage.getItem('${STORAGE_KEY}') || 'null');
+      const repo = stored?.cards?.michaeldaniel?.repos?.[0];
+      const overlay = document.getElementById('repo-detail-overlay');
+      const closed = overlay.hidden;
+      // close via Escape
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return { note: repo?.note ?? '', closedBeforeEsc: closed };
+    })()`);
+    check(
+      'the full detail view opens from the expanded row',
+      detail.buttonPresent === true &&
+        detail.overlayOpen === true &&
+        detail.hasTitle === true &&
+        detail.hasNotes === true &&
+        detail.hasChecklist === true &&
+        detail.hasActivity === true &&
+        detail.chips >= 1,
+      JSON.stringify(detail)
+    );
+    check(
+      'detail view edits persist and Escape closes it',
+      detailStored.note === 'Detail view note' && detailStored.closedBeforeEsc === false,
+      JSON.stringify(detailStored)
+    );
+
     // ---- 18. Console cleanliness ----------------------------------------------
     check(
       'the renderer logs no console errors',

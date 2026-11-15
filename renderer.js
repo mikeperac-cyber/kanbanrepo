@@ -819,6 +819,8 @@ function createRepoRow(cardId, repo) {
     }
 
     todoInput.dataset.focusKey = `todo:${repo.id}`;
+    const detailViewBtn = row.querySelector('.detail-view-btn');
+    detailViewBtn?.addEventListener('click', () => openRepoDetail(cardId, repo.id));
     todoInput.setAttribute('aria-label', `Add a checklist item for ${name}`);
     todoForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -1935,6 +1937,238 @@ function wireBoardSwitcher() {
   document.getElementById('board-dialog-close').addEventListener('click', () => dialog.close());
 }
 
+/* ---------- Repo detail view ---------- */
+
+let detailTarget = null; // { cardId, repoId }
+
+function openRepoDetail(cardId, repoId) {
+  const repo = findRepo(cardId, repoId);
+  if (!repo) return;
+  detailTarget = { cardId, repoId };
+  renderRepoDetail();
+  document.getElementById('repo-detail-overlay').hidden = false;
+  document.body.classList.add('detail-open');
+}
+
+function closeRepoDetail() {
+  detailTarget = null;
+  document.getElementById('repo-detail-overlay').hidden = true;
+  document.body.classList.remove('detail-open');
+  renderAll();
+}
+
+function renderRepoDetail() {
+  const overlay = document.getElementById('repo-detail-overlay');
+  if (!overlay || !detailTarget) return;
+  const { cardId, repoId } = detailTarget;
+  const repo = findRepo(cardId, repoId);
+  if (!repo) {
+    closeRepoDetail();
+    return;
+  }
+  const col = state.columns.find((item) => item.id === cardId);
+  const name = repoDisplayName(repo);
+
+  overlay.textContent = '';
+  const page = document.createElement('div');
+  page.className = 'detail-page';
+
+  // Header: name, url, description, actions.
+  const head = document.createElement('header');
+  head.className = 'detail-page-head';
+  const headMain = document.createElement('div');
+  const title = document.createElement('h2');
+  title.textContent = name;
+  const urlLine = document.createElement('a');
+  urlLine.className = 'detail-url';
+  urlLine.textContent = prettifyUrl(repo.url);
+  urlLine.href = '#';
+  urlLine.title = repo.url;
+  urlLine.addEventListener('click', (event) => {
+    event.preventDefault();
+    openUrl(repo.url);
+  });
+  headMain.append(title, urlLine);
+  if (repo.description) {
+    const desc = document.createElement('p');
+    desc.className = 'detail-desc';
+    desc.textContent = repo.description;
+    headMain.appendChild(desc);
+  }
+  const headActions = document.createElement('div');
+  headActions.className = 'detail-actions';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'btn-ghost';
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', closeRepoDetail);
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'btn-primary';
+  openBtn.textContent = 'Open in browser';
+  openBtn.addEventListener('click', () => openUrl(repo.url));
+  headActions.append(openBtn, closeBtn);
+  head.append(headMain, headActions);
+  page.appendChild(head);
+
+  // Meta chips: column, priority, due, GitHub data, pin/archive state, tags.
+  const meta = document.createElement('div');
+  meta.className = 'detail-meta';
+  const metaBits = [
+    `Column: ${col?.label ?? cardId}`,
+    `Priority: ${priorityLabel(repo.priority)}`,
+  ];
+  if (repo.dueDate) metaBits.push(`${repo.dueDate < localDateIso() ? 'Overdue since' : 'Due'} ${formatDueDate(repo.dueDate)}`);
+  if (repo.language) metaBits.push(repo.language);
+  if (repo.stars !== null) metaBits.push(`★ ${repo.stars.toLocaleString()}`);
+  if (repo.pinned) metaBits.push('Pinned');
+  if (repo.archived) metaBits.push('Archived');
+  for (const bit of metaBits) {
+    const chip = document.createElement('span');
+    chip.className = 'detail-chip';
+    chip.textContent = bit;
+    meta.appendChild(chip);
+  }
+  for (const tag of repo.tags) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'detail-chip is-tag';
+    chip.textContent = `#${tag}`;
+    chip.title = `Filter the board by #${tag}`;
+    chip.addEventListener('click', () => {
+      closeRepoDetail();
+      setActiveTag(tag);
+    });
+    meta.appendChild(chip);
+  }
+  page.appendChild(meta);
+
+  attachDetailBody(page, cardId, repo, name);
+  overlay.appendChild(page);
+}
+
+function attachDetailBody(page, cardId, repo, name) {
+  const grid = document.createElement('div');
+  grid.className = 'detail-grid';
+
+  // Notes card.
+  const notesCard = document.createElement('section');
+  notesCard.className = 'detail-card';
+  const notesHead = document.createElement('h3');
+  notesHead.textContent = 'Notes';
+  const notesArea = document.createElement('textarea');
+  notesArea.className = 'detail-notes';
+  notesArea.rows = 12;
+  notesArea.maxLength = MAX_NOTE_LENGTH;
+  notesArea.value = repo.note;
+  notesArea.placeholder = 'Capture setup steps, decisions, links, and ideas…';
+  notesArea.setAttribute('aria-label', `Full notes for ${name}`);
+  notesArea.addEventListener('input', () => {
+    repo.note = notesArea.value.slice(0, MAX_NOTE_LENGTH);
+    repo.updatedAt = nowIso();
+    scheduleSave();
+  });
+  notesArea.addEventListener('blur', persistNow);
+  notesCard.append(notesHead, notesArea);
+
+  // Checklist card.
+  const todoCard = document.createElement('section');
+  todoCard.className = 'detail-card';
+  const done = repo.todos.filter((todo) => todo.done).length;
+  const todoHead = document.createElement('h3');
+  todoHead.textContent = `Checklist (${done}/${repo.todos.length})`;
+  const todoList = document.createElement('ul');
+  todoList.className = 'detail-todo-list';
+  for (const todo of repo.todos) {
+    const item = document.createElement('li');
+    item.className = `repo-todo ${todo.done ? 'is-done' : ''}`;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = todo.done;
+    checkbox.setAttribute('aria-label', `Mark ${todo.text} ${todo.done ? 'not done' : 'done'}`);
+    checkbox.addEventListener('change', () => {
+      toggleTodo(cardId, repo.id, todo.id);
+      renderRepoDetail();
+    });
+    const label = document.createElement('span');
+    label.textContent = todo.text;
+    const deleteTodo = document.createElement('button');
+    deleteTodo.type = 'button';
+    deleteTodo.className = 'todo-delete';
+    deleteTodo.textContent = '×';
+    deleteTodo.title = 'Delete task';
+    deleteTodo.setAttribute('aria-label', `Delete task: ${todo.text}`);
+    deleteTodo.addEventListener('click', () => {
+      removeTodo(cardId, repo.id, todo.id);
+      renderRepoDetail();
+    });
+    item.append(checkbox, label, deleteTodo);
+    todoList.appendChild(item);
+  }
+  if (!repo.todos.length) {
+    const emptyItem = document.createElement('li');
+    emptyItem.className = 'tags-manage-empty';
+    emptyItem.textContent = 'No tasks yet';
+    todoList.appendChild(emptyItem);
+  }
+  const todoForm = document.createElement('form');
+  todoForm.className = 'detail-todo-form';
+  const todoInput = document.createElement('input');
+  todoInput.type = 'text';
+  todoInput.maxLength = MAX_TODO_LENGTH;
+  todoInput.placeholder = 'Add a task…';
+  todoInput.setAttribute('aria-label', `Add a checklist item for ${name}`);
+  const todoAdd = document.createElement('button');
+  todoAdd.type = 'submit';
+  todoAdd.className = 'btn-ghost btn-sm';
+  todoAdd.textContent = 'Add';
+  todoForm.append(todoInput, todoAdd);
+  todoForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (addTodo(cardId, repo.id, todoInput.value)) {
+      todoInput.value = '';
+      scheduleSave();
+      renderRepoDetail();
+    }
+  });
+  todoCard.append(todoHead, todoList, todoForm);
+
+  grid.append(notesCard, todoCard);
+  page.appendChild(grid);
+
+  // Activity footer.
+  const activity = document.createElement('footer');
+  activity.className = 'detail-activity';
+  const fmt = (iso) => {
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
+  };
+  activity.textContent = `Created ${fmt(repo.createdAt)} · Updated ${fmt(repo.updatedAt)} · ID ${repo.id.slice(0, 8)}`;
+  page.appendChild(activity);
+}
+
+function wireRepoDetail() {
+  const overlay = document.getElementById('repo-detail-overlay');
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) closeRepoDetail();
+  });
+  // Escape closes the detail view before any other Escape handler runs.
+  window.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key === 'Escape' && !overlay.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeRepoDetail();
+      }
+    },
+    true
+  );
+}
+
 /* ---------- Configurable columns ---------- */
 
 function slugifyColumnId(label, taken) {
@@ -2381,6 +2615,7 @@ function openRowMenu(event, cardId, repoId) {
   const menu = document.getElementById('row-menu');
   const items = [
     ['Open in browser', () => openUrl(repo.url)],
+    ['Open details view', () => openRepoDetail(cardId, repo.id)],
     ['Edit details…', () => openRepoDialog(cardId, repo.id)],
     [repo.pinned ? 'Unpin' : 'Pin', () => toggleRepoPin(cardId, repo.id)],
     [repo.archived ? 'Restore' : 'Archive', () => toggleRepoArchive(cardId, repo.id)],
@@ -2625,6 +2860,7 @@ function init() {
   wireTagManager();
   wireBulkBar();
   wireBoardSwitcher();
+  wireRepoDetail();
   notifyDueRepos();
 
   window.addEventListener('beforeunload', () => {

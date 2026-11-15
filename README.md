@@ -9,6 +9,7 @@ A local Windows desktop board for organizing repositories across four GitHub acc
 - **Board stats** — repos, pinned, archived, overdue, and checklist progress in the sidebar
 - A left account sidebar that works as a dashboard: repo counts, pinned counts, and overdue counts per account; click an account to open it as a full-width board, or **All accounts** to see every column side by side
 - Compact repo rows with a one-line note field on every row; a row expands in place for its checklist and full notes, one open per column
+- **Full-page repo detail view** — open it from the expanded row (*Full view*) or the right-click menu: metadata chips, big notes editor, checklist, and timestamps in one place
 - Search across repo names, URLs, tags, notes, and checklist items
 - Sort pinned repos first, by recent update, by creation date, or by name
 - Add and edit repository labels, tags, colors, priority, and due dates
