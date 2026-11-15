@@ -292,13 +292,17 @@
         <header class="dialog-head">
           <div>
             <h2 id="column-dialog-title">Add account column</h2>
-            <p class="dialog-sub">The label is also the GitHub username used by Import.</p>
+            <p class="dialog-sub">Import fetches repositories from the GitHub username below.</p>
           </div>
           <button class="dialog-close" id="column-dialog-close" type="button" aria-label="Close">&times;</button>
         </header>
         <label class="field">
           <span class="field-label">Column name</span>
           <input class="field-input" id="column-label" type="text" maxlength="40" placeholder="e.g. sideprojects" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span class="field-label">GitHub username <span class="field-optional">used by Import</span></span>
+          <input class="field-input" id="column-username" type="text" maxlength="39" placeholder="e.g. mikeperac-cyber" autocomplete="off" spellcheck="false" />
         </label>
         <div class="dialog-actions">
           <button class="btn-ghost is-danger" id="column-remove" type="button" hidden>Remove column</button>

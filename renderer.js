@@ -404,6 +404,7 @@ const cardColorClose = document.getElementById('card-color-close');
 const columnDialog = document.getElementById('column-dialog');
 const columnForm = document.getElementById('column-form');
 const columnLabelInput = document.getElementById('column-label');
+const columnUserInput = document.getElementById('column-username');
 const columnRemove = document.getElementById('column-remove');
 const columnCancel = document.getElementById('column-cancel');
 const columnDialogClose = document.getElementById('column-dialog-close');
@@ -2318,7 +2319,18 @@ function rebuildBoard() {
   renderAll();
 }
 
-function addColumn(label) {
+const GITHUB_USERNAME_RE = /^[a-z0-9](?:-?[a-z0-9]){0,38}$/i;
+
+function normalizeUsername(raw) {
+  const clean = String(raw ?? '').trim().replace(/\s+/g, '').slice(0, 39);
+  if (clean && !GITHUB_USERNAME_RE.test(clean)) {
+    showToast('GitHub usernames are letters, numbers, and hyphens (no leading hyphen, max 39 chars)');
+    return null;
+  }
+  return clean.toLowerCase();
+}
+
+function addColumn(label, username) {
   const clean = String(label ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
   if (!clean) return false;
   if (state.columns.length >= 12) {
@@ -2326,7 +2338,10 @@ function addColumn(label) {
     return false;
   }
   const taken = new Set(state.columns.map((col) => col.id));
-  const id = slugifyColumnId(clean, taken);
+  let id = username ? username : slugifyColumnId(clean, taken);
+  if (username && taken.has(username)) {
+    id = slugifyColumnId(username, taken);
+  }
   const accent = ACCENT_CYCLE[state.columns.length % ACCENT_CYCLE.length];
   state.columns.push({ id, label: clean, accent });
   state.cards[id] = { note: '', color: null, repos: [] };
@@ -2336,14 +2351,26 @@ function addColumn(label) {
   return true;
 }
 
-function renameColumn(cardId, label) {
+function renameColumn(cardId, label, username) {
   const clean = String(label ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
   const col = state.columns.find((item) => item.id === cardId);
   if (!col || !clean) return false;
+  const oldId = col.id;
+  if (username && username !== col.id) {
+    if (state.columns.some((item) => item.id !== cardId && item.id === username)) {
+      showToast('Another column already uses that GitHub username');
+      return false;
+    }
+    // Migrate the card data to the new id so repos, notes, and settings survive.
+    state.cards[username] = state.cards[col.id];
+    delete state.cards[col.id];
+    if (openCardId === col.id) openCardId = username;
+    col.id = username;
+  }
   col.label = clean;
   rebuildBoard();
   scheduleSave();
-  showToast('Column renamed');
+  showToast(username && username !== oldId ? `Column now imports from @${username}` : 'Column updated');
   return true;
 }
 
@@ -2379,6 +2406,9 @@ function openColumnDialog(cardId = null) {
     : 'Add account column';
   columnLabelInput.value = col ? col.label : '';
   columnLabelInput.classList.remove('invalid');
+  columnUserInput.value = col ? col.id : '';
+  columnUserInput.classList.remove('invalid');
+  columnUserInput.placeholder = col ? col.id : 'leave blank to derive from the name';
   columnRemove.hidden = !col;
   if (col) {
     const hasRepos = state.cards[cardId].repos.length > 0;
@@ -2397,8 +2427,14 @@ function saveColumnDialog(event) {
     columnLabelInput.focus();
     return;
   }
-  if (editingColumn) renameColumn(editingColumn, label);
-  else addColumn(label);
+  const username = normalizeUsername(columnUserInput.value);
+  if (username === null) {
+    columnUserInput.classList.add('invalid');
+    columnUserInput.focus();
+    return;
+  }
+  if (editingColumn) renameColumn(editingColumn, label, username);
+  else addColumn(label, username);
   columnDialog.close();
 }
 
@@ -2410,6 +2446,7 @@ function wireColumnDialog() {
     if (editingColumn && removeColumn(editingColumn)) columnDialog.close();
   });
   columnLabelInput.addEventListener('input', () => columnLabelInput.classList.remove('invalid'));
+  columnUserInput.addEventListener('input', () => columnUserInput.classList.remove('invalid'));
 }
 
 /* ---------- Board statistics ---------- */

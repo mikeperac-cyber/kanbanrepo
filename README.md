@@ -19,7 +19,7 @@ A local Windows desktop board for organizing repositories across four GitHub acc
 - **Manual order** — choose *Manual order* in the sort menu, then drag rows to reorder within a column
 - **Bulk actions** — Ctrl+click rows to select, then pin/unpin, archive, move, or remove many at once
 - **Multiple boards** — separate workspaces with their own columns and repos, switched from the sidebar (*+ New board*)
-- Import public repos from GitHub on demand; existing local repos and notes are preserved
+- Import public repos from GitHub on demand (each column pulls from its own GitHub username — set or change it in the column's pencil dialog); existing local repos and notes are preserved
 - **Private-repo import** — sign in with GitHub (device flow, no password stored) and Import also pulls the connected account's private repos
 - **GitHub metadata on cards** — language, star count, and description (Import also refreshes metadata for repos already on the board)
 - **Due-date reminders** — one native Windows notification per day listing repos due today or overdue

@@ -1483,12 +1483,24 @@ async function main() {
       // rename via the column edit dialog
       lastColumn.querySelector('.column-edit').click();
       const input2 = document.getElementById('column-label');
+      const userInput = document.getElementById('column-username');
       out.renamePrefill = input2.value;
+      out.usernamePrefill = userInput.value;
       out.removeDisabled = document.getElementById('column-remove').disabled;
       input2.value = 'Experiments';
       document.getElementById('column-form').requestSubmit();
-      const renamed = [...document.querySelectorAll('.column')].pop();
+      let renamed = [...document.querySelectorAll('.column')].pop();
       out.renamedTitle = renamed.querySelector('.column-title').textContent;
+      // change the GitHub username: invalid first, then valid
+      renamed.querySelector('.column-edit').click();
+      input2.value = 'Experiments';
+      userInput.value = 'bad user!';
+      document.getElementById('column-form').requestSubmit();
+      out.invalidKeptOpen = document.getElementById('column-dialog').open;
+      userInput.value = 'exps-cyber';
+      document.getElementById('column-form').requestSubmit();
+      renamed = [...document.querySelectorAll('.column')].pop();
+      out.idAfterUsernameChange = renamed.dataset.cardId;
       // remove via the same dialog (empty column → enabled)
       renamed.querySelector('.column-edit').click();
       const removeBtn = document.getElementById('column-remove');
@@ -1517,7 +1529,14 @@ async function main() {
     );
     check(
       'column edit dialog prefills and renames',
-      colFlow.renamePrefill === 'Side Projects' && colFlow.renamedTitle === 'Experiments',
+      colFlow.renamePrefill === 'Side Projects' &&
+        colFlow.usernamePrefill === 'side-projects' &&
+        colFlow.renamedTitle === 'Experiments',
+      JSON.stringify(colFlow)
+    );
+    check(
+      'column GitHub username rejects invalid and migrates on change',
+      colFlow.invalidKeptOpen === true && colFlow.idAfterUsernameChange === 'exps-cyber',
       JSON.stringify(colFlow)
     );
     check(

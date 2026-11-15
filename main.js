@@ -430,6 +430,9 @@ ipcMain.handle(
     for (let page = 1; page <= GITHUB_MAX_PAGES; page += 1) {
       const url = `https://api.github.com/users/${encodeURIComponent(handle)}/repos?per_page=100&sort=pushed&page=${page}`;
       const res = await fetch(url, { headers });
+      if (res.status === 404) {
+        throw new Error(`No GitHub account named "${handle}" was found — check the column's GitHub username.`);
+      }
       if (!res.ok) {
         throw new Error(`GitHub API ${res.status}: ${res.statusText}`);
       }
