@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('api', {
   /** File-menu triggers: export/import board backup. */
   onMenuExport: (callback) => ipcRenderer.on('menu:export-board', () => callback()),
   onMenuImport: (callback) => ipcRenderer.on('menu:import-board', () => callback()),
+  /** Show a native Windows toast for due/overdue repos. */
+  notifyDue: (payload) => ipcRenderer.invoke('notify-due', payload),
 });

@@ -4,6 +4,7 @@ const {
   app,
   BrowserWindow,
   Menu,
+  Notification,
   dialog,
   ipcMain,
   nativeTheme,
@@ -242,6 +243,20 @@ ipcMain.handle('board:import', async () => {
   } catch (error) {
     return { ok: false, error: error.message };
   }
+});
+
+// Native toast for due/overdue repos. Shown once per day from the renderer.
+ipcMain.handle('notify-due', (_event, payload) => {
+  if (!Notification.isSupported()) return false;
+  const count = Number(payload?.count) || 0;
+  if (count <= 0) return false;
+  const items = Array.isArray(payload.items) ? payload.items.filter((item) => typeof item === 'string') : [];
+  new Notification({
+    title: count === 1 ? '1 repo is due' : `${count} repos are due or overdue`,
+    body: items.slice(0, 5).join('\n') + (count > 5 ? `\n…and ${count - 5} more` : ''),
+    silent: false,
+  }).show();
+  return true;
 });
 
 // GitHub API integration — fetch repos for a username.

@@ -59,6 +59,7 @@ const bridge = window.api ?? {
   importBoard: async () => ({ ok: false, cancelled: true }),
   onMenuExport: () => {},
   onMenuImport: () => {},
+  notifyDue: async () => false,
 };
 
 let state;
@@ -156,6 +157,9 @@ function sanitizeRepo(incoming) {
     priority: raw.priority === 'low' || raw.priority === 'high' ? raw.priority : 'medium',
     dueDate: typeof raw.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.dueDate) ? raw.dueDate : '',
     note: typeof raw.note === 'string' ? raw.note.slice(0, MAX_NOTE_LENGTH) : '',
+    language: typeof raw.language === 'string' ? raw.language.slice(0, 40) : '',
+    stars: Number.isFinite(raw.stars) && raw.stars >= 0 ? raw.stars : null,
+    description: typeof raw.description === 'string' ? raw.description.slice(0, 200) : '',
     todos: Array.isArray(raw.todos)
       ? raw.todos
           .filter((todo) => todo && typeof todo.text === 'string')
@@ -429,6 +433,9 @@ function makeRepoRecord(url, extra = {}) {
     priority: 'medium',
     dueDate: '',
     note: '',
+    language: '',
+    stars: null,
+    description: '',
     todos: [],
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -561,7 +568,7 @@ function createRepoRow(cardId, repo) {
   const name = repoDisplayName(repo);
   const open = row.querySelector('.repo-title');
   open.textContent = name;
-  open.title = repo.url;
+  open.title = repo.description ? `${repo.url}\n\n${repo.description}` : repo.url;
   open.setAttribute('aria-label', `Open ${name}`);
   open.addEventListener('click', () => openUrl(repo.url));
 
@@ -623,6 +630,20 @@ function createRepoRow(cardId, repo) {
   for (const tag of repo.tags) tagsWrap.appendChild(createTagChip(tag));
 
   const badges = row.querySelector('.repo-badges');
+  if (repo.language || repo.stars !== null) {
+    const gh = document.createElement('span');
+    gh.className = 'repo-badge repo-gh';
+    const parts = [];
+    if (repo.language) {
+      const dot = document.createElement('span');
+      dot.className = 'lang-dot';
+      gh.appendChild(dot);
+      parts.push(repo.language);
+    }
+    if (repo.stars !== null) parts.push(`★ ${repo.stars.toLocaleString()}`);
+    gh.appendChild(document.createTextNode(parts.join(' · ')));
+    badges.appendChild(gh);
+  }
   if (repo.priority !== 'medium') {
     const priority = document.createElement('span');
     priority.className = `repo-badge priority-${repo.priority}`;
@@ -652,6 +673,14 @@ function createRepoRow(cardId, repo) {
     archived.className = 'repo-badge repo-archived-badge';
     archived.textContent = 'Archived';
     badges.appendChild(archived);
+  }
+
+  // Description shows as its own muted line under the meta row.
+  if (repo.description) {
+    const desc = document.createElement('p');
+    desc.className = 'repo-desc';
+    desc.textContent = repo.description;
+    row.querySelector('.repo-meta').after(desc);
   }
 
   // One-line note field — always visible.
@@ -1110,14 +1139,33 @@ async function importGithubRepos(cardId, button) {
 
     const repos = state.cards[cardId].repos;
     let added = 0;
+    let refreshed = 0;
     for (const remote of remoteRepos) {
       const url = normalizeUrl(typeof remote?.html_url === 'string' ? remote.html_url : '');
-      if (!url || repos.some((repo) => sameUrl(repo.url, url))) continue;
+      if (!url) continue;
+      const existing = repos.find((repo) => sameUrl(repo.url, url));
+      const language = typeof remote.language === 'string' ? remote.language.slice(0, 40) : '';
+      const stars = Number.isFinite(remote.stargazers_count) && remote.stargazers_count >= 0
+        ? remote.stargazers_count
+        : null;
+      const description = typeof remote.description === 'string' ? remote.description.slice(0, 200) : '';
+
+      if (existing) {
+        // Refresh metadata without touching user data (notes, tags, pins…).
+        existing.language = language;
+        existing.stars = stars;
+        existing.description = description;
+        refreshed += 1;
+        continue;
+      }
       const created = typeof remote.created_at === 'string' ? remote.created_at : nowIso();
       const updated = typeof remote.pushed_at === 'string' ? remote.pushed_at : nowIso();
       repos.push(
         makeRepoRecord(url, {
           label: typeof remote.name === 'string' ? remote.name.slice(0, 60) : '',
+          language,
+          stars,
+          description,
           createdAt: created,
           updatedAt: updated,
         })
@@ -1127,7 +1175,10 @@ async function importGithubRepos(cardId, button) {
 
     renderAll();
     scheduleSave();
-    showToast(added ? `Imported ${added} new repos. Existing notes were kept.` : 'No new public repos found');
+    if (added && refreshed) showToast(`Imported ${added} new · refreshed ${refreshed}`);
+    else if (added) showToast(added === 1 ? 'Imported 1 new repo. Existing notes were kept.' : `Imported ${added} new repos. Existing notes were kept.`);
+    else if (refreshed) showToast(`Metadata refreshed for ${refreshed} repos`);
+    else showToast('No new public repos found');
   } catch (error) {
     showToast(`GitHub import failed: ${error.message || 'check your connection and try again'}`);
     setStatus('Import failed', 'error');
@@ -1504,6 +1555,40 @@ async function initAppInfo() {
   }
 }
 
+/* ---------- Due-date reminders ---------- */
+
+const NOTIFIED_KEY = 'kanban-repo-cards.notified-on';
+
+function collectDueRepos() {
+  const today = localDateIso();
+  const due = [];
+  for (const def of CARD_DEFS) {
+    for (const repo of state.cards[def.id].repos) {
+      if (repo.archived || !repo.dueDate || repo.dueDate > today) continue;
+      due.push({
+        name: repoDisplayName(repo),
+        overdue: repo.dueDate < today,
+      });
+    }
+  }
+  return due;
+}
+
+// One native toast per day listing what is due today or overdue.
+function notifyDueRepos() {
+  const today = localDateIso();
+  if (localStorage.getItem(NOTIFIED_KEY) === today) return;
+  const due = collectDueRepos();
+  if (!due.length) return;
+  localStorage.setItem(NOTIFIED_KEY, today);
+  bridge
+    .notifyDue({
+      count: due.length,
+      items: due.map((item) => `${item.overdue ? 'Overdue' : 'Due today'}: ${item.name}`),
+    })
+    .catch(() => {});
+}
+
 /* ---------- Board backup ---------- */
 
 async function exportBoard() {
@@ -1849,6 +1934,7 @@ function init() {
 
   wireShortcutsDialog();
   wireRowContextMenu();
+  notifyDueRepos();
 
   window.addEventListener('beforeunload', () => {
     // Only flush pending edits; otherwise leave storage alone so an

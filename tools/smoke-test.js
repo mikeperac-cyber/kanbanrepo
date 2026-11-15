@@ -1235,6 +1235,20 @@ async function main() {
     );
 
     // ---- 15. Persistence across a reload ----------------------------------
+    // Seed GitHub metadata and a due date on the moved repo, then reload.
+    await evaluate(`(() => {
+      const stored = JSON.parse(localStorage.getItem('${STORAGE_KEY}') || 'null');
+      const moved = stored?.cards?.mikeperac?.repos?.[0];
+      if (!moved) return false;
+      moved.language = 'TypeScript';
+      moved.stars = 4200;
+      moved.description = 'A seeded description for the smoke test.';
+      const today = new Date();
+      moved.dueDate = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      localStorage.setItem('${STORAGE_KEY}', JSON.stringify(stored));
+      localStorage.removeItem('kanban-repo-cards.notified-on');
+      return true;
+    })()`);
     await reload();
 
     const reloaded = await evaluate(`(() => {
@@ -1274,6 +1288,37 @@ async function main() {
       'the sidebar counts survive a reload',
       reloaded.sidebarCount === '1',
       reloaded.sidebarCount
+    );
+
+    // ---- 15c. GitHub metadata rendering and due reminders ------------------
+    const meta = await evaluate(`(() => {
+      const row = document.querySelector('.column[data-card-id=\"mikeperac\"] .repo');
+      return {
+        gh: row.querySelector('.repo-gh')?.textContent ?? '',
+        hasLangDot: Boolean(row.querySelector('.lang-dot')),
+        desc: row.querySelector('.repo-desc')?.textContent ?? '',
+        title: row.querySelector('.repo-title')?.title ?? '',
+      };
+    })()`);
+    check(
+      'language and stars render on the row',
+      /TypeScript/.test(meta.gh) && /★ 4,200/.test(meta.gh) && meta.hasLangDot,
+      JSON.stringify(meta)
+    );
+    check(
+      'description renders as its own line and in the tooltip',
+      meta.desc === 'A seeded description for the smoke test.' && meta.title.includes('seeded description'),
+      JSON.stringify(meta)
+    );
+    const notified = await evaluate(`localStorage.getItem('kanban-repo-cards.notified-on')`);
+    const todayKey = await evaluate(`(() => {
+      const d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    })()`);
+    check(
+      'a due repo marks the daily reminder as sent',
+      notified === todayKey,
+      `${notified} vs ${todayKey}`
     );
 
     // ---- 15b. Undo, context menu, shortcuts cheat sheet --------------------

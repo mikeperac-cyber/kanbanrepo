@@ -2222,3 +2222,32 @@ button {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
 }
+
+/* ============================================================
+   GitHub metadata on repo rows
+   ============================================================ */
+
+.repo-gh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lang-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-indigo);
+  flex: 0 0 auto;
+}
+
+.repo-desc {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  line-height: var(--line-normal);
+  color: var(--muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}

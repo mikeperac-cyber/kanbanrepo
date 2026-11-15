@@ -14,6 +14,8 @@ A local Windows desktop board for organizing repositories across four GitHub acc
 - Keep a checklist for each repo, then archive work without deleting it
 - Drag a repo between columns or drop a web link onto a column
 - Import public repos from GitHub on demand; existing local repos and notes are preserved
+- **GitHub metadata on cards** — language, star count, and description (Import also refreshes metadata for repos already on the board)
+- **Due-date reminders** — one native Windows notification per day listing repos due today or overdue
 - Dark and light themes, keyboard shortcuts, and local-only board storage
 - **Undo** for removed repos and deleted checklist tasks (via the toast)
 - **Export / import board backups** as JSON — File menu, or Ctrl+Shift+S / Ctrl+Shift+O
