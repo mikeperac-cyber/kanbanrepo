@@ -27,4 +27,10 @@ contextBridge.exposeInMainWorld('api', {
   ghSignOut: () => ipcRenderer.invoke('ghauth:signout'),
   /** Authenticated GitHub import: includes the connected account's private repos. */
   fetchGithubReposAuth: (username) => ipcRenderer.invoke('github:fetch-repos-auth', String(username)),
+  /** Quick Add window: receive URLs to add, report the summary back. */
+  onQuickAddAdd: (callback) => ipcRenderer.on('quick-add:add', (_event, payload) => callback(payload)),
+  sendQuickAddDone: (result) => ipcRenderer.send('quick-add:done', result),
+  /** Quick Add window: provide the current column list on request. */
+  onQuickAddColumnsRequest: (callback) => ipcRenderer.on('quick-add:columns-request', () => callback()),
+  sendQuickAddColumns: (columns) => ipcRenderer.send('quick-add:columns-response', columns),
 });

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'"
+  />
+  <title>Quick Add</title>
+  <link rel="stylesheet" href="quick-add.css" />
+</head>
+<body>
+  <div class="qa-window">
+    <header class="qa-head">
+      <span class="qa-title">&#9889; Quick Add</span>
+      <div class="qa-head-actions">
+        <select class="qa-column" id="qa-column" aria-label="Destination column" title="Destination column"></select>
+        <button class="qa-close" id="qa-close" type="button" aria-label="Hide Quick Add window">&times;</button>
+      </div>
+    </header>
+    <div class="qa-body">
+      <textarea
+        class="qa-input"
+        id="qa-input"
+        rows="4"
+        placeholder="Paste repo URL(s)&#8212;Enter adds them"
+        spellcheck="false"
+        autocomplete="off"
+        aria-label="Repo URLs"
+      ></textarea>
+      <button class="qa-add" id="qa-add" type="button">Add to column</button>
+      <p class="qa-status" id="qa-status" role="status">Paste a repo URL from your browser.</p>
+    </div>
+  </div>
+  <script src="quick-add.js"></script>
+</body>
+</html>

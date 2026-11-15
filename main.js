@@ -6,6 +6,7 @@ const {
   Menu,
   Notification,
   dialog,
+  globalShortcut,
   ipcMain,
   nativeTheme,
   session,
@@ -32,6 +33,7 @@ if (!process.windowsStore) {
 }
 
 let mainWindow = null;
+let quickAddWindow = null;
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -57,9 +59,22 @@ function start() {
   buildMenu();
   createWindow();
 
+  // Global toggle so the paste catcher works even while the browser has focus.
+  try {
+    globalShortcut.register('CommandOrControl+Shift+Q', toggleQuickAdd);
+  } catch {
+    /* shortcut already owned by another app — menu item still works */
+  }
+  app.on('will-quit', () => globalShortcut.unregisterAll());
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // Smoke-test hook: open the Quick Add window on startup (dev builds only).
+  if (!app.isPackaged && process.env.KANBAN_QUICK_ADD_START === '1') {
+    setTimeout(toggleQuickAdd, 600);
+  }
 }
 
 function windowIcon() {
@@ -112,6 +127,93 @@ function createWindow() {
     }
   });
 }
+
+/* ---------- Quick Add: always-on-top URL paste catcher ---------- */
+
+function createQuickAddWindow() {
+  quickAddWindow = new BrowserWindow({
+    width: 380,
+    height: 252,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    title: 'Quick Add',
+    icon: windowIcon(),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-quick-add.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: false,
+    },
+  });
+
+  quickAddWindow.loadFile(path.join(__dirname, 'quick-add.html'));
+  quickAddWindow.once('ready-to-show', () => {
+    quickAddWindow.show();
+    quickAddWindow.focus();
+  });
+  quickAddWindow.on('closed', () => {
+    quickAddWindow = null;
+  });
+}
+
+function toggleQuickAdd() {
+  if (quickAddWindow && !quickAddWindow.isDestroyed()) {
+    if (quickAddWindow.isVisible()) quickAddWindow.hide();
+    else {
+      quickAddWindow.show();
+      quickAddWindow.focus();
+    }
+    return;
+  }
+  createQuickAddWindow();
+}
+
+// Board → main relay: the popup asks for the column list from the board window.
+ipcMain.handle('quick-add:columns', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return [];
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (columns) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener('quick-add:columns-response', onResponse);
+      resolve(Array.isArray(columns) ? columns : []);
+    };
+    const onResponse = (_event, columns) => finish(columns);
+    ipcMain.on('quick-add:columns-response', onResponse);
+    mainWindow.webContents.send('quick-add:columns-request');
+    setTimeout(() => finish([]), 2000);
+  });
+});
+
+// Popup → board relay: add the URLs, wait for the board's summary.
+ipcMain.handle('quick-add:send', async (_event, payload) => {
+  const urls = Array.isArray(payload?.urls) ? payload.urls.filter((url) => typeof url === 'string') : [];
+  const columnId = typeof payload?.columnId === 'string' ? payload.columnId : '';
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'The board window is not open.' };
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener('quick-add:done', onDone);
+      resolve(result && typeof result === 'object' ? result : { ok: false, error: 'No response from the board.' });
+    };
+    const onDone = (_event, result) => finish(result);
+    ipcMain.on('quick-add:done', onDone);
+    mainWindow.webContents.send('quick-add:add', { urls, columnId });
+    setTimeout(() => finish({ ok: false, error: 'No response from the board.' }), 3000);
+  });
+});
+
+ipcMain.handle('quick-add:close', () => {
+  if (quickAddWindow && !quickAddWindow.isDestroyed()) quickAddWindow.hide();
+});
 
 function openExternal(rawUrl) {
   try {
@@ -187,6 +289,8 @@ function buildMenu() {
       submenu: [
         { role: 'reload' },
         ...(isDev ? [{ role: 'toggleDevTools' }] : []),
+        { type: 'separator' },
+        { label: 'Quick Add Window', click: toggleQuickAdd },
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },

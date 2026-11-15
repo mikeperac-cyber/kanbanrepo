@@ -92,6 +92,7 @@ async function main() {
       ...process.env,
       KANBAN_USERDATA: userDataDir,
       ELECTRON_ENABLE_LOGGING: '1',
+      KANBAN_QUICK_ADD_START: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -1849,6 +1850,138 @@ async function main() {
         ghUiOpen.dialogClosed === true,
       `${JSON.stringify(ghUi)} ${JSON.stringify(ghUiOpen)}`
     );
+
+    // ---- 24. Quick Add always-on-top window -----------------------------------
+    const qaTarget = await (async () => {
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        try {
+          const response = await fetch(`http://127.0.0.1:${PORT}/json/list`);
+          const targets = await response.json();
+          const target = targets.find((item) => item.type === 'page' && /quick-add\.html/.test(item.url));
+          if (target && target.webSocketDebuggerUrl) return target;
+        } catch {
+          /* retry */
+        }
+        await delay(200);
+      }
+      return null;
+    })();
+    check('Quick Add window opens (startup hook)', Boolean(qaTarget));
+
+    let qaWs = null;
+    if (qaTarget) {
+      qaWs = new WebSocket(qaTarget.webSocketDebuggerUrl);
+      await new Promise((resolve, reject) => {
+        qaWs.onopen = resolve;
+        qaWs.onerror = () => reject(new Error('Could not connect to Quick Add window'));
+      });
+      let qaId = 9000;
+      const qaPending = new Map();
+      qaWs.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (!message.id) return;
+        const entry = qaPending.get(message.id);
+        if (!entry) return;
+        qaPending.delete(message.id);
+        if (message.error) entry.reject(new Error(message.error.message));
+        else entry.resolve(message.result);
+      };
+      const qaSend = (method, params = {}) =>
+        new Promise((resolve, reject) => {
+          const id = qaId;
+          qaId += 1;
+          qaPending.set(id, { resolve, reject });
+          qaWs.send(JSON.stringify({ id, method, params }));
+        });
+      const qaEval = async (expression) => {
+        const result = await qaSend('Runtime.evaluate', {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+          userGesture: true,
+        });
+        if (result.exceptionDetails) {
+          throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+        }
+        return result.result.value;
+      };
+      await qaSend('Runtime.enable');
+
+      // The popup should learn the board's column list from the main window.
+      const targetColumnId = (await readState()).columns[0].id;
+      const qaReady = await waitFor(
+        async () => (await qaEval(`document.getElementById('qa-column').options.length`)) > 0,
+        15000
+      ).catch(() => 0);
+      const qaSetup = await qaEval(`(() => {
+        const column = document.getElementById('qa-column');
+        return {
+          options: [...column.options].map((option) => option.value),
+          selected: column.value,
+        };
+      })()`);
+      check(
+        'Quick Add lists the board columns',
+        qaReady && qaSetup.options.includes(targetColumnId),
+        JSON.stringify(qaSetup)
+      );
+
+      // Paste a block of text (two URLs + noise) and add it.
+      const qaBeforeAdd = (await readState()).cards[targetColumnId].repos.length;
+      const qaAdd = await qaEval(`(async () => {
+        const column = document.getElementById('qa-column');
+        column.value = ${JSON.stringify(targetColumnId)};
+        const input = document.getElementById('qa-input');
+        input.value = 'https://github.com/quickadd-smoke/one\\nhttps://github.com/quickadd-smoke/two\\nnot a url at all';
+        document.getElementById('qa-add').click();
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return {
+          status: document.getElementById('qa-status').textContent,
+          cleared: document.getElementById('qa-input').value === '',
+        };
+      })()`);
+      await delay(600);
+      const qaState = await readState();
+      const qaRepos = (qaState?.cards?.[targetColumnId]?.repos ?? [])
+        .map((repo) => repo.url)
+        .map((url) => String(url).replace(/\/+$/, ''));
+      check(
+        'Quick Add adds pasted URLs to the chosen column',
+        qaAdd.cleared === true &&
+          qaRepos.some((url) => /quickadd-smoke\/one$/.test(url)) &&
+          qaRepos.some((url) => /quickadd-smoke\/two$/.test(url)),
+        `${JSON.stringify(qaAdd)} repos=${qaRepos.length}`
+      );
+      const qaAfterAdd = qaState.cards[targetColumnId].repos.length;
+      check(
+        'Quick Add adds exactly the valid URLs (noise ignored)',
+        qaAfterAdd === qaBeforeAdd + 2 && String(qaAdd.status).toLowerCase().includes('added'),
+        `before=${qaBeforeAdd} after=${qaAfterAdd} ${JSON.stringify(qaAdd)}`
+      );
+
+      // Re-adding the same URL reports a duplicate without duplicating rows.
+      const qaBefore = qaRepos.length;
+      const qaDup = await qaEval(`(async () => {
+        const input = document.getElementById('qa-input');
+        input.value = 'https://github.com/quickadd-smoke/one';
+        document.getElementById('qa-add').click();
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return document.getElementById('qa-status').textContent;
+      })()`);
+      await delay(600);
+      const qaDupCount = (await readState()).cards[targetColumnId].repos.length;
+      check(
+        'Quick Add reports duplicates and keeps one row',
+        String(qaDup).toLowerCase().includes('already') && qaDupCount === qaBefore,
+        `${JSON.stringify(qaDup)} before=${qaBefore} after=${qaDupCount}`
+      );
+
+      // Close button hides the window without crashing.
+      await qaEval(`document.getElementById('qa-close').click(); true`);
+      await delay(300);
+      qaWs.close();
+    }
 
     // ---- 18. Console cleanliness ----------------------------------------------
     check(

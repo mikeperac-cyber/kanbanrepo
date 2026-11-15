@@ -2736,6 +2736,7 @@ const SHORTCUTS = [
   ['Ctrl+N', 'Jump to the first add field'],
   ['Ctrl+P', 'Toggle pinned-only view'],
   ['Ctrl+1…4', 'Focus an account column'],
+  ['Ctrl+Shift+Q', 'Toggle the Quick Add window (works from any app)'],
   ['Esc', 'Clear search / close dialogs'],
   ['?', 'This cheat sheet'],
 ];
@@ -2982,6 +2983,43 @@ function init() {
   // File menu → board backup.
   bridge.onMenuExport(exportBoard);
   bridge.onMenuImport(importBoard);
+
+  // Quick Add window → add pasted URLs to a column (same path as link drops).
+  if (typeof bridge.onQuickAddAdd === 'function') {
+    bridge.onQuickAddAdd((payload) => {
+      const urls = Array.isArray(payload?.urls) ? payload.urls : [];
+      const def =
+        state.columns.find((column) => column.id === payload?.columnId) || state.columns[0];
+      if (!def) return;
+      const repos = state.cards[def.id].repos;
+      let added = 0;
+      let duplicates = 0;
+      for (const raw of urls) {
+        const url = normalizeUrl(typeof raw === 'string' ? raw : '');
+        if (!url || repos.some((existing) => sameUrl(existing.url, url))) {
+          duplicates += 1;
+          continue;
+        }
+        repos.push(makeRepoRecord(url));
+        added += 1;
+      }
+      renderAll();
+      scheduleSave();
+      if (added) showToast(`Quick add: ${added} to ${def.label}`);
+      if (typeof bridge.sendQuickAddDone === 'function') {
+        bridge.sendQuickAddDone({ ok: true, added, duplicates, columnLabel: def.label });
+      }
+    });
+  }
+  if (typeof bridge.onQuickAddColumnsRequest === 'function') {
+    bridge.onQuickAddColumnsRequest(() => {
+      if (typeof bridge.sendQuickAddColumns === 'function') {
+        bridge.sendQuickAddColumns(
+          state.columns.map((column) => ({ id: column.id, label: column.label }))
+        );
+      }
+    });
+  }
 
   // Extra keyboard shortcuts: Ctrl+P pinned-only, Ctrl+1..4 focus a column's
   // add field, ? opens the cheat sheet (when not typing).
