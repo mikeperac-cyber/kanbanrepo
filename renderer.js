@@ -67,6 +67,12 @@ const bridge = window.api ?? {
   onMenuExport: () => {},
   onMenuImport: () => {},
   notifyDue: async () => false,
+  ghConfig: async () => ({ connected: false, login: '', tokenSource: 'none' }),
+  ghSetClientId: async () => ({ ok: true }),
+  ghStartLogin: async () => ({}),
+  ghPollLogin: async () => ({ status: 'expired' }),
+  ghSignOut: async () => ({ ok: true }),
+  fetchGithubReposAuth: async () => [],
 };
 
 let state;
@@ -1236,7 +1242,9 @@ async function importGithubRepos(cardId, button) {
   setStatus('Fetching public repositories…', 'saving');
 
   try {
-    const remoteRepos = await bridge.fetchGithubRepos(cardId);
+    const remoteRepos = ghConnected && cardId
+      ? await bridge.fetchGithubReposAuth(cardId)
+      : await bridge.fetchGithubRepos(cardId);
     if (!Array.isArray(remoteRepos)) throw new Error('GitHub returned an unexpected response');
 
     const repos = state.cards[cardId].repos;
@@ -2169,6 +2177,124 @@ function wireRepoDetail() {
   );
 }
 
+/* ---------- GitHub connection (device flow) ---------- */
+
+let ghConnected = false;
+let ghLogin = '';
+
+async function refreshGhState() {
+  try {
+    const config = await bridge.ghConfig();
+    ghConnected = Boolean(config.connected);
+    ghLogin = config.login || '';
+  } catch {
+    ghConnected = false;
+    ghLogin = '';
+  }
+  updateGhUi();
+}
+
+function updateGhUi() {
+  const button = document.getElementById('gh-connect');
+  if (!button) return;
+  if (ghConnected) {
+    button.textContent = ghLogin ? `GitHub: ${ghLogin} ✓` : 'GitHub connected ✓';
+    button.classList.add('is-connected');
+    button.title = 'Connected — Import includes private repos. Click to sign out.';
+  } else {
+    button.textContent = 'Connect GitHub';
+    button.classList.remove('is-connected');
+    button.title = 'Sign in to import private repositories';
+  }
+}
+
+async function openGhDialog() {
+  const dialog = document.getElementById('gh-dialog');
+  if (ghConnected) {
+    if (window.confirm(`Sign out of GitHub (${ghLogin || 'connected account'})? Private-repo import will stop working.`)) {
+      await bridge.ghSignOut();
+      await refreshGhState();
+      showToast('Signed out of GitHub');
+    }
+    return;
+  }
+  await refreshGhState();
+  dialog.showModal();
+  window.setTimeout(() => document.getElementById('gh-client-id').focus(), 30);
+}
+
+let ghLoginActive = false;
+
+async function startGhLogin() {
+  if (ghLoginActive) return;
+  const clientIdInput = document.getElementById('gh-client-id');
+  const status = document.getElementById('gh-status');
+  const codeLine = document.getElementById('gh-code-line');
+  const codeEl = document.getElementById('gh-user-code');
+  const verifyLink = document.getElementById('gh-verify-link');
+  const clientId = clientIdInput.value.trim();
+  if (!clientId) {
+    clientIdInput.classList.add('invalid');
+    clientIdInput.focus();
+    return;
+  }
+
+  try {
+    await bridge.ghSetClientId(clientId);
+  } catch (error) {
+    status.textContent = error.message || 'That Client ID was rejected.';
+    return;
+  }
+
+  ghLoginActive = true;
+  try {
+    status.textContent = 'Contacting GitHub…';
+    const session = await bridge.ghStartLogin();
+    codeEl.textContent = session.userCode;
+    verifyLink.textContent = session.verifyUri;
+    verifyLink.href = session.verifyUri;
+    codeLine.hidden = false;
+    status.textContent = 'Enter the code on github.com, then approve access…';
+    openUrl(session.verifyUri);
+
+    const started = Date.now();
+    const deadline = started + (session.expiresIn ?? 900) * 1000;
+    let interval = (session.interval ?? 5) * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, interval));
+      const result = await bridge.ghPollLogin(session.deviceCode);
+      if (result.status === 'ok') {
+        ghConnected = true;
+        ghLogin = result.login || '';
+        updateGhUi();
+        status.textContent = `Connected as ${ghLogin || 'your account'} ✓`;
+        showToast('GitHub connected — Import now includes private repos');
+        window.setTimeout(() => document.getElementById('gh-dialog').close(), 900);
+        return;
+      }
+      if (result.status === 'expired') {
+        status.textContent = 'The code expired — try again.';
+        break;
+      }
+      if (result.status === 'slow') interval = Math.min(interval + 5000, 30000);
+    }
+    if (!ghConnected) status.textContent = 'Sign-in did not complete — try again.';
+  } catch (error) {
+    status.textContent = error.message || 'GitHub sign-in failed.';
+  } finally {
+    ghLoginActive = false;
+  }
+}
+
+function wireGhDialog() {
+  document.getElementById('gh-connect').addEventListener('click', openGhDialog);
+  document.getElementById('gh-start').addEventListener('click', startGhLogin);
+  document.getElementById('gh-cancel').addEventListener('click', () => document.getElementById('gh-dialog').close());
+  document.getElementById('gh-dialog-close').addEventListener('click', () => document.getElementById('gh-dialog').close());
+  document.getElementById('gh-client-id').addEventListener('input', (event) => event.target.classList.remove('invalid'));
+  refreshGhState();
+}
+
 /* ---------- Configurable columns ---------- */
 
 function slugifyColumnId(label, taken) {
@@ -2861,6 +2987,7 @@ function init() {
   wireBulkBar();
   wireBoardSwitcher();
   wireRepoDetail();
+  wireGhDialog();
   notifyDueRepos();
 
   window.addEventListener('beforeunload', () => {

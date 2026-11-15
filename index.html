@@ -53,6 +53,7 @@
           <button class="toggle-btn" id="archive-toggle" type="button" aria-pressed="false">Show archived</button>
 
           <span class="store-badge" id="store-badge" hidden>Microsoft Store</span>
+          <button class="gh-connect" id="gh-connect" type="button">Connect GitHub</button>
           <span class="repo-total" id="repo-total">0 repos</span>
 
           <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
@@ -304,6 +305,35 @@
           <span class="dialog-spacer"></span>
           <button class="btn-ghost" id="column-cancel" type="button">Cancel</button>
           <button class="btn-primary" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="repo-dialog" id="gh-dialog" aria-labelledby="gh-dialog-title">
+      <form class="repo-form" id="gh-form" novalidate>
+        <header class="dialog-head">
+          <div>
+            <h2 id="gh-dialog-title">Connect GitHub</h2>
+            <p class="dialog-sub">Sign in once to import private repositories. No password is stored.</p>
+          </div>
+          <button class="dialog-close" id="gh-dialog-close" type="button" aria-label="Close">&times;</button>
+        </header>
+        <label class="field">
+          <span class="field-label">OAuth Client ID <span class="field-optional">from github.com/settings/developers</span></span>
+          <input class="field-input" id="gh-client-id" type="text" maxlength="30" placeholder="Iv1.xxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="gh-steps">1. Paste your Client ID (Device Flow must be enabled on the app).<br />
+        2. Press <strong>Sign in</strong> — a code appears here.<br />
+        3. Approve it at <strong>github.com/login/device</strong>.</p>
+        <div class="gh-code-line" id="gh-code-line" hidden>
+          <span class="gh-code" id="gh-user-code"></span>
+          <a class="gh-verify" id="gh-verify-link" href="#" target="_blank" rel="noopener">open github.com/login/device</a>
+        </div>
+        <p class="gh-status" id="gh-status" role="status">Not connected.</p>
+        <div class="dialog-actions">
+          <span class="dialog-spacer"></span>
+          <button class="btn-ghost" id="gh-cancel" type="button">Close</button>
+          <button class="btn-primary" id="gh-start" type="submit">Sign in</button>
         </div>
       </form>
     </dialog>

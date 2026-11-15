@@ -13,6 +13,7 @@ const {
 } = require('electron');
 const path = require('node:path');
 const fsPromises = require('node:fs/promises');
+const fsSync = require('node:fs');
 
 const APP_ID = 'com.mikedaniel.kanbanrepocards';
 const APP_NAME = 'Kanban Repo Cards';
@@ -263,6 +264,150 @@ ipcMain.handle('notify-due', (_event, payload) => {
 const GITHUB_USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const GITHUB_MAX_PAGES = 10; // 10 × 100 = 1000 repos, enough for any account
 
+/* ---------- GitHub OAuth device flow (private repo import) ----------
+   The client secret never touches disk: device flow only needs the
+   Client ID. The access token is stored in the userData folder, which
+   lives outside the repository. */
+
+const GH_TOKEN_FILE = () => path.join(app.getPath('userData'), 'gh-token.json');
+const GH_DEVICE_SCOPE = 'repo read:user';
+
+function readGhToken() {
+  try {
+    const raw = JSON.parse(fsSync.readFileSync(GH_TOKEN_FILE(), 'utf8'));
+    return typeof raw.access_token === 'string' && raw.access_token ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeGhToken(data) {
+  fsSync.writeFileSync(GH_TOKEN_FILE(), JSON.stringify(data), 'utf8');
+}
+
+ipcMain.handle('ghauth:get-config', () => {
+  const token = readGhToken();
+  return {
+    clientId: process.env.GITHUB_CLIENT_ID ?? '',
+    connected: Boolean(token),
+    login: token?.login ?? '',
+    tokenSource: process.env.GITHUB_CLIENT_ID ? 'env' : 'none',
+  };
+});
+
+ipcMain.handle('ghauth:set-client-id', (_event, clientId) => {
+  const clean = typeof clientId === 'string' ? clientId.trim() : '';
+  if (!/^[A-Za-z0-9]{16,25}$/.test(clean)) {
+    throw new Error('That does not look like a GitHub Client ID (expected ~20 characters).');
+  }
+  // Kept in userData next to the token; not committed with the repo.
+  fsSync.writeFileSync(
+    path.join(app.getPath('userData'), 'gh-client-id.txt'),
+    clean,
+    'utf8'
+  );
+  return { ok: true };
+});
+
+function readGhClientId() {
+  try {
+    const value = fsSync
+      .readFileSync(path.join(app.getPath('userData'), 'gh-client-id.txt'), 'utf8')
+      .trim();
+    return /^[A-Za-z0-9]{16,25}$/.test(value) ? value : '';
+  } catch {
+    return '';
+  }
+}
+
+ipcMain.handle('ghauth:start', async () => {
+  const clientId = process.env.GITHUB_CLIENT_ID || readGhClientId();
+  if (!clientId) {
+    throw new Error('Set your GitHub OAuth Client ID first.');
+  }
+  const res = await fetch('https://github.com/login/device/code', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      client_id: clientId,
+      scope: GH_DEVICE_SCOPE,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub device flow failed: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  return {
+    deviceCode: data.device_code,
+    userCode: data.user_code,
+    verifyUri: data.verification_uri,
+    interval: Math.max(data.interval ?? 5, 3),
+    expiresIn: data.expires_in ?? 900,
+  };
+});
+
+ipcMain.handle('ghauth:poll', async (_event, deviceCode) => {
+  const clientId = process.env.GITHUB_CLIENT_ID || readGhClientId();
+  if (!clientId || typeof deviceCode !== 'string' || !deviceCode) {
+    throw new Error('No device login in progress.');
+  }
+  const res = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      client_id: clientId,
+      device_code: deviceCode,
+      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub token poll failed: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  if (data.error === 'authorization_pending') return { status: 'pending' };
+  if (data.error === 'slow_down') return { status: 'slow' };
+  if (data.error === 'expired_token') return { status: 'expired' };
+  if (data.error) {
+    throw new Error(`GitHub auth error: ${data.error}`);
+  }
+  if (!data.access_token) {
+    throw new Error('GitHub did not return an access token.');
+  }
+
+  // Identify the account so the UI can show who is connected.
+  let login = '';
+  try {
+    const me = await fetch('https://api.github.com/user', {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `token ${data.access_token}`,
+        'User-Agent': 'Kanban-Repo-Cards',
+      },
+    });
+    if (me.ok) login = (await me.json()).login ?? '';
+  } catch {
+    /* login label is optional */
+  }
+
+  writeGhToken({ access_token: data.access_token, login });
+  return { status: 'ok', login };
+});
+
+ipcMain.handle('ghauth:signout', () => {
+  try {
+    fsSync.rmSync(GH_TOKEN_FILE());
+  } catch {
+    /* already gone */
+  }
+  return { ok: true };
+});
+
 ipcMain.handle(
   'github:fetch-repos',
   async (_event, username) => {
@@ -296,6 +441,43 @@ ipcMain.handle(
     return allRepos;
   }
 );
+
+// Authenticated variant: uses the device-flow token, so private repos of the
+// connected account are included in the import.
+ipcMain.handle('github:fetch-repos-auth', async (_event, username) => {
+  const handle = typeof username === 'string' ? username.trim() : '';
+  if (!GITHUB_USERNAME.test(handle)) {
+    throw new Error('Enter a valid GitHub username.');
+  }
+  const token = readGhToken();
+  if (!token) {
+    throw new Error('Connect GitHub first to import private repos.');
+  }
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    Authorization: `token ${token.access_token}`,
+    'User-Agent': 'Kanban-Repo-Cards',
+  };
+
+  const allRepos = [];
+  for (let page = 1; page <= GITHUB_MAX_PAGES; page += 1) {
+    const url = `https://api.github.com/user/repos?per_page=100&sort=pushed&type=owner&page=${page}&affiliation=owner`;
+    const res = await fetch(url, { headers });
+    if (res.status === 401) {
+      throw new Error('Your GitHub connection expired — sign in again.');
+    }
+    if (!res.ok) {
+      throw new Error(`GitHub API ${res.status}: ${res.statusText}`);
+    }
+    const batch = await res.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    allRepos.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return allRepos.filter(
+    (repo) => typeof repo?.html_url === 'string' && repo.html_url.toLowerCase().includes(`/${handle}/`)
+  );
+});
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());

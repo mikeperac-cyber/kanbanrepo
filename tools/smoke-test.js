@@ -1802,6 +1802,35 @@ async function main() {
       JSON.stringify(detailStored)
     );
 
+    // ---- 23. GitHub connect UI ---------------------------------------------
+    const ghUi = await evaluate(`(() => {
+      const out = {};
+      const button = document.getElementById('gh-connect');
+      out.buttonText = button.textContent.trim();
+      button.click();
+      out.hasSteps = Boolean(document.querySelector('.gh-steps'));
+      out.hasCodeLineHidden = document.getElementById('gh-code-line').hidden;
+      return out;
+    })()`);
+    await delay(400);
+
+    const ghUiOpen = await evaluate(`(() => {
+      const dialog = document.getElementById('gh-dialog');
+      const out = { dialogOpen: dialog.open };
+      document.getElementById('gh-dialog-close').click();
+      out.dialogClosed = dialog.open === false;
+      return out;
+    })()`);
+    check(
+      'GitHub connect button opens the device-flow dialog',
+      ghUi.buttonText === 'Connect GitHub' &&
+        ghUiOpen.dialogOpen === true &&
+        ghUi.hasSteps === true &&
+        ghUi.hasCodeLineHidden === true &&
+        ghUiOpen.dialogClosed === true,
+      `${JSON.stringify(ghUi)} ${JSON.stringify(ghUiOpen)}`
+    );
+
     // ---- 18. Console cleanliness ----------------------------------------------
     check(
       'the renderer logs no console errors',

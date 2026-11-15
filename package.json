@@ -1,7 +1,7 @@
 {
   "name": "kanban-repo-cards",
   "productName": "Kanban Repo Cards",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "A local four-account repository board with searchable notes and checklists.",
   "main": "main.js",
   "author": "Michael Daniel",

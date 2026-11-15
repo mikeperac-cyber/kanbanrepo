@@ -2721,3 +2721,70 @@ button {
   align-items: center;
   gap: var(--space-2);
 }
+/* ============================================================
+   GitHub connection (device flow)
+   ============================================================ */
+
+.gh-connect {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.gh-connect:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.gh-connect.is-connected {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+.gh-steps {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--line-normal);
+  color: var(--muted);
+}
+
+.gh-code-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.gh-code {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text);
+}
+
+.gh-verify {
+  font-size: var(--text-xs);
+  color: var(--accent-indigo);
+  text-decoration: none;
+}
+
+.gh-verify:hover {
+  text-decoration: underline;
+}
+
+.gh-status {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-soft);
+}

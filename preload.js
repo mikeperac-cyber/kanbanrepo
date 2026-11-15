@@ -19,4 +19,12 @@ contextBridge.exposeInMainWorld('api', {
   onMenuImport: (callback) => ipcRenderer.on('menu:import-board', () => callback()),
   /** Show a native Windows toast for due/overdue repos. */
   notifyDue: (payload) => ipcRenderer.invoke('notify-due', payload),
+  /** GitHub device-flow auth: config, login steps, sign-out. */
+  ghConfig: () => ipcRenderer.invoke('ghauth:get-config'),
+  ghSetClientId: (clientId) => ipcRenderer.invoke('ghauth:set-client-id', String(clientId)),
+  ghStartLogin: () => ipcRenderer.invoke('ghauth:start'),
+  ghPollLogin: (deviceCode) => ipcRenderer.invoke('ghauth:poll', String(deviceCode)),
+  ghSignOut: () => ipcRenderer.invoke('ghauth:signout'),
+  /** Authenticated GitHub import: includes the connected account's private repos. */
+  fetchGithubReposAuth: (username) => ipcRenderer.invoke('github:fetch-repos-auth', String(username)),
 });
