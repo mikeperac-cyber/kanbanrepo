@@ -5,6 +5,8 @@ A local Windows desktop board for organizing repositories across four GitHub acc
 ## Features
 
 - Four account columns: `michaeldaniel`, `mikeperac`, `michaeld`, and `mikelb`
+- **Configurable columns** — add, rename, or remove account columns (sidebar **+ Add account**, or the pencil on a column)
+- **Board stats** — repos, pinned, archived, overdue, and checklist progress in the sidebar
 - A left account sidebar that works as a dashboard: repo counts, pinned counts, and overdue counts per account; click an account to open it as a full-width board, or **All accounts** to see every column side by side
 - Compact repo rows with a one-line note field on every row; a row expands in place for its checklist and full notes, one open per column
 - Search across repo names, URLs, tags, notes, and checklist items
@@ -69,6 +71,7 @@ For a real Store submission, use the Partner Center identity and signing certifi
 | Archive a repo | Click the archive control; use **Show archived** to find it later |
 | Search | Use the top search field, or press **Ctrl+F**; **Esc** clears an active search |
 | Filter by tag | Click a tag chip; **Clear filter** restores the full board |
+| Manage tags | Click **Manage tags** in the tag bar to rename or delete a tag everywhere |
 | Open one account | Click the account in the left sidebar; its column takes over the whole board area |
 | Show all accounts | Click **All accounts** in the left sidebar to bring back the four-column board |
 | Import GitHub repos | Click **Import** on a column; only missing public repos are added |

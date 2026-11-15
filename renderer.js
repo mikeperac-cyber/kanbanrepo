@@ -22,7 +22,14 @@ const ACCENT_HEX = {
   violet: '#7c3aed',
   sky: '#0284c7',
   teal: '#0f766e',
+  pink: '#ec4899',
+  amber: '#eab308',
+  green: '#22c55e',
+  slate: '#64748b',
 };
+
+// Order used when assigning an accent to a new column.
+const ACCENT_CYCLE = ['indigo', 'violet', 'sky', 'teal', 'pink', 'amber', 'green', 'slate'];
 
 const STORAGE_KEY = 'kanban-repo-cards.state.v3';
 const LEGACY_STATE_KEY = 'kanban-repo-cards.state.v2';
@@ -94,7 +101,12 @@ function emptyState() {
   for (const def of CARD_DEFS) {
     cards[def.id] = { note: '', color: null, repos: [] };
   }
-  return { version: 3, view: { ...view }, cards };
+  return {
+    version: 3,
+    view: { ...view },
+    columns: CARD_DEFS.map((def) => ({ ...def })),
+    cards,
+  };
 }
 
 function newRepoId() {
@@ -194,7 +206,26 @@ function sanitizeState(raw) {
     };
   }
 
-  for (const def of CARD_DEFS) {
+  // Columns: persisted since v3.1; missing/invalid entries fall back to the
+  // default four accounts so older states keep working untouched.
+  if (Array.isArray(raw.columns)) {
+    const seen = new Set();
+    const columns = [];
+    for (const col of raw.columns.slice(0, 12)) {
+      const id =
+        typeof col?.id === 'string' && /^[a-z0-9][a-z0-9-]{0,38}$/i.test(col.id)
+          ? col.id.toLowerCase()
+          : '';
+      const label = typeof col?.label === 'string' ? col.label.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+      if (!id || !label || seen.has(id)) continue;
+      seen.add(id);
+      columns.push({ id, label, accent: ACCENT_HEX[col.accent] ? col.accent : 'indigo' });
+    }
+    if (columns.length) next.columns = columns;
+  }
+
+  for (const def of next.columns) {
+    if (!next.cards[def.id]) next.cards[def.id] = { note: '', color: null, repos: [] };
     const incoming = raw.cards[def.id];
     if (!incoming || typeof incoming !== 'object') continue;
 
@@ -325,6 +356,17 @@ const cardSwatches = document.getElementById('card-swatches');
 const cardColorInput = document.getElementById('card-color-input');
 const cardColorHex = document.getElementById('card-color-hex');
 const cardColorClose = document.getElementById('card-color-close');
+
+const columnDialog = document.getElementById('column-dialog');
+const columnForm = document.getElementById('column-form');
+const columnLabelInput = document.getElementById('column-label');
+const columnRemove = document.getElementById('column-remove');
+const columnCancel = document.getElementById('column-cancel');
+const columnDialogClose = document.getElementById('column-dialog-close');
+
+const tagsDialog = document.getElementById('tags-dialog');
+const tagsManage = document.getElementById('tag-manage');
+const tagsManageClose = document.getElementById('tags-dialog-close');
 
 const refs = new Map();
 
@@ -808,6 +850,14 @@ function renderColumn(cardId) {
     empty.className = 'empty';
     empty.textContent = emptyText(cardId);
     entry.list.appendChild(empty);
+    if (isFiltering()) {
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'btn-ghost btn-sm empty-clear';
+      clearBtn.textContent = 'Clear filters';
+      clearBtn.addEventListener('click', clearAllFilters);
+      entry.list.appendChild(clearBtn);
+    }
   } else {
     for (const repo of visible) entry.list.appendChild(createRepoRow(cardId, repo));
   }
@@ -833,14 +883,14 @@ function renderSidebar() {
   accountList.textContent = '';
 
   let allLive = 0;
-  for (const def of CARD_DEFS) {
+  for (const def of state.columns) {
     allLive += state.cards[def.id].repos.filter((repo) => !repo.archived).length;
   }
   allAccountsCount.textContent = String(allLive);
   allAccountsBtn.classList.toggle('is-focused', openCardId === null);
   allAccountsBtn.setAttribute('aria-pressed', String(openCardId === null));
 
-  for (const def of CARD_DEFS) {
+  for (const def of state.columns) {
     const repos = state.cards[def.id].repos;
     const live = repos.filter((repo) => !repo.archived);
     const pinned = live.filter((repo) => repo.pinned).length;
@@ -877,7 +927,7 @@ function renderSidebar() {
 function updateTotals() {
   let total = 0;
   let visible = 0;
-  for (const def of CARD_DEFS) {
+  for (const def of state.columns) {
     const repos = state.cards[def.id].repos;
     total += repos.length;
     visible += repos.filter(repoMatchesFilters).length;
@@ -895,7 +945,7 @@ function updateTotals() {
 
 function collectTags() {
   const map = new Map();
-  for (const def of CARD_DEFS) {
+  for (const def of state.columns) {
     for (const repo of state.cards[def.id].repos) {
       for (const tag of repo.tags) {
         const key = tag.toLowerCase();
@@ -954,12 +1004,13 @@ function renderTagSuggestions() {
 
 function renderAll() {
   const focus = captureFocus();
-  for (const def of CARD_DEFS) renderColumn(def.id);
+  for (const def of state.columns) renderColumn(def.id);
   renderSidebar();
   updateTotals();
   renderTagBar();
   renderTagSuggestions();
   board.classList.toggle('is-single', Boolean(openCardId));
+  renderStats();
   archiveToggle.setAttribute('aria-pressed', String(view.showArchived));
   archiveToggle.textContent = view.showArchived ? 'Hide archived' : 'Show archived';
   pinnedToggle.setAttribute('aria-pressed', String(view.pinnedOnly));
@@ -1018,7 +1069,7 @@ function handleAdd(event, def) {
 let lastDeleted = null; // { cardId, repo, index, todoIndex } for Undo
 
 function removeRepo(cardId, repoId) {
-  const def = CARD_DEFS.find((item) => item.id === cardId);
+  const def = state.columns.find((item) => item.id === cardId);
   const repos = state.cards[cardId].repos;
   const index = repos.findIndex((repo) => repo.id === repoId);
   if (!def || index === -1) return;
@@ -1314,7 +1365,7 @@ function openRepoDialog(cardId, repoId) {
   editing = { cardId, repoId };
   pendingRepoColor = repo.color;
 
-  const def = CARD_DEFS.find((item) => item.id === cardId);
+  const def = state.columns.find((item) => item.id === cardId);
   repoDialogSub.textContent = `${def.label} · ${prettifyUrl(repo.url)}`;
   repoUrlInput.value = repo.url;
   repoUrlInput.classList.remove('invalid');
@@ -1555,6 +1606,307 @@ async function initAppInfo() {
   }
 }
 
+/* ---------- Configurable columns ---------- */
+
+function slugifyColumnId(label, taken) {
+  const base =
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-{2,}/g, '-')
+      .slice(0, 38) || 'account';
+  let id = base;
+  let n = 2;
+  while (taken.has(id)) id = `${base}-${n++}`;
+  return id;
+}
+
+function rebuildBoard() {
+  board.textContent = '';
+  refs.clear();
+  buildColumns();
+  renderAll();
+}
+
+function addColumn(label) {
+  const clean = String(label ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!clean) return false;
+  if (state.columns.length >= 12) {
+    showToast('A board can have up to 12 columns');
+    return false;
+  }
+  const taken = new Set(state.columns.map((col) => col.id));
+  const id = slugifyColumnId(clean, taken);
+  const accent = ACCENT_CYCLE[state.columns.length % ACCENT_CYCLE.length];
+  state.columns.push({ id, label: clean, accent });
+  state.cards[id] = { note: '', color: null, repos: [] };
+  rebuildBoard();
+  scheduleSave();
+  showToast(`Added column ${clean}`);
+  return true;
+}
+
+function renameColumn(cardId, label) {
+  const clean = String(label ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  const col = state.columns.find((item) => item.id === cardId);
+  if (!col || !clean) return false;
+  col.label = clean;
+  rebuildBoard();
+  scheduleSave();
+  showToast('Column renamed');
+  return true;
+}
+
+function removeColumn(cardId) {
+  const col = state.columns.find((item) => item.id === cardId);
+  if (!col) return false;
+  if (state.columns.length <= 1) {
+    showToast('A board needs at least one column');
+    return false;
+  }
+  if (state.cards[cardId]?.repos.length) {
+    showToast('Move or remove its repos first');
+    return false;
+  }
+  state.columns = state.columns.filter((item) => item.id !== cardId);
+  delete state.cards[cardId];
+  if (openCardId === cardId) openCardId = null;
+  rebuildBoard();
+  scheduleSave();
+  showToast(`Removed ${col.label}`);
+  return true;
+}
+
+/* ---------- Column dialog (add / rename / remove) ---------- */
+
+let editingColumn = null; // null = add mode, otherwise the column id
+
+function openColumnDialog(cardId = null) {
+  editingColumn = cardId;
+  const col = cardId ? state.columns.find((item) => item.id === cardId) : null;
+  document.getElementById('column-dialog-title').textContent = col
+    ? 'Edit column'
+    : 'Add account column';
+  columnLabelInput.value = col ? col.label : '';
+  columnLabelInput.classList.remove('invalid');
+  columnRemove.hidden = !col;
+  if (col) {
+    const hasRepos = state.cards[cardId].repos.length > 0;
+    columnRemove.disabled = hasRepos;
+    columnRemove.title = hasRepos ? 'Move or remove its repos first' : 'Remove this column';
+  }
+  columnDialog.showModal();
+  window.setTimeout(() => columnLabelInput.focus(), 30);
+}
+
+function saveColumnDialog(event) {
+  event.preventDefault();
+  const label = columnLabelInput.value.trim();
+  if (!label) {
+    columnLabelInput.classList.add('invalid');
+    columnLabelInput.focus();
+    return;
+  }
+  if (editingColumn) renameColumn(editingColumn, label);
+  else addColumn(label);
+  columnDialog.close();
+}
+
+function wireColumnDialog() {
+  columnForm.addEventListener('submit', saveColumnDialog);
+  columnCancel.addEventListener('click', () => columnDialog.close());
+  columnDialogClose.addEventListener('click', () => columnDialog.close());
+  columnRemove.addEventListener('click', () => {
+    if (editingColumn && removeColumn(editingColumn)) columnDialog.close();
+  });
+  columnLabelInput.addEventListener('input', () => columnLabelInput.classList.remove('invalid'));
+}
+
+/* ---------- Board statistics ---------- */
+
+function renderStats() {
+  const statsBody = document.getElementById('stats-body');
+  if (!statsBody) return;
+  let repos = 0;
+  let pinned = 0;
+  let archived = 0;
+  let overdue = 0;
+  let tasksDone = 0;
+  let tasksTotal = 0;
+  const today = localDateIso();
+  for (const def of state.columns) {
+    for (const repo of state.cards[def.id].repos) {
+      repos += 1;
+      if (repo.pinned) pinned += 1;
+      if (repo.archived) archived += 1;
+      if (!repo.archived && repo.dueDate && repo.dueDate < today) overdue += 1;
+      tasksTotal += repo.todos.length;
+      tasksDone += repo.todos.filter((todo) => todo.done).length;
+    }
+  }
+  const topTags = collectTags()
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  statsBody.textContent = '';
+  const rows = [
+    ['Repos', String(repos)],
+    ['Pinned', String(pinned)],
+    ['Archived', String(archived)],
+    ['Overdue', String(overdue)],
+    ['Tasks', tasksTotal ? `${tasksDone}/${tasksTotal} done` : '—'],
+  ];
+  for (const [label, value] of rows) {
+    const row = document.createElement('div');
+    row.className = 'stats-row';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const val = document.createElement('span');
+    val.className = 'stats-value';
+    val.textContent = value;
+    row.append(name, val);
+    statsBody.appendChild(row);
+  }
+  if (topTags.length) {
+    const row = document.createElement('div');
+    row.className = 'stats-row stats-tags';
+    const name = document.createElement('span');
+    name.textContent = 'Top tags';
+    const val = document.createElement('span');
+    val.className = 'stats-value';
+    val.textContent = topTags.map((entry) => `#${entry.tag} (${entry.count})`).join(' ');
+    row.append(name, val);
+    statsBody.appendChild(row);
+  }
+}
+
+/* ---------- Tag management ---------- */
+
+function eachRepo(callback) {
+  for (const def of state.columns) {
+    for (const repo of state.cards[def.id].repos) callback(repo);
+  }
+}
+
+function renameTagEverywhere(from, to) {
+  const parsed = parseTags(to);
+  if (!parsed.length) {
+    showToast('Enter a new tag name');
+    return false;
+  }
+  const target = parsed[0];
+  let changed = 0;
+  eachRepo((repo) => {
+    if (!repo.tags.some((tag) => tag.toLowerCase() === from.toLowerCase())) return;
+    repo.tags = [...new Set(repo.tags.map((tag) => (tag.toLowerCase() === from.toLowerCase() ? target : tag)))];
+    repo.updatedAt = nowIso();
+    changed += 1;
+  });
+  if (changed) {
+    if (activeTag && activeTag.toLowerCase() === from.toLowerCase()) activeTag = target;
+    renderAll();
+    scheduleSave();
+    showToast(`Renamed on ${changed} repo${changed === 1 ? '' : 's'}`);
+  } else {
+    showToast('Nothing to rename');
+  }
+  return changed > 0;
+}
+
+function deleteTagEverywhere(tag) {
+  let changed = 0;
+  eachRepo((repo) => {
+    if (!repo.tags.some((entry) => entry.toLowerCase() === tag.toLowerCase())) return;
+    repo.tags = repo.tags.filter((entry) => entry.toLowerCase() !== tag.toLowerCase());
+    repo.updatedAt = nowIso();
+    changed += 1;
+  });
+  if (activeTag && activeTag.toLowerCase() === tag.toLowerCase()) activeTag = null;
+  if (changed) {
+    renderAll();
+    scheduleSave();
+  }
+  showToast(changed ? `Removed from ${changed} repo${changed === 1 ? '' : 's'}` : 'Nothing to remove');
+  return changed > 0;
+}
+
+/* ---------- Tag manager dialog ---------- */
+
+function openTagManager() {
+  const list = document.getElementById('tags-manage-list');
+  list.textContent = '';
+  const tags = collectTags();
+  if (!tags.length) {
+    const empty = document.createElement('p');
+    empty.className = 'tags-manage-empty';
+    empty.textContent = 'No tags yet. Add tags from a repo’s details dialog.';
+    list.appendChild(empty);
+  }
+  for (const entry of tags) {
+    const row = document.createElement('li');
+    row.className = 'tags-manage-row';
+
+    const label = document.createElement('span');
+    label.className = 'tags-manage-name';
+    label.textContent = `#${entry.tag}`;
+    label.title = `${entry.count} repo${entry.count === 1 ? '' : 's'}`;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tags-manage-input';
+    input.value = entry.tag;
+    input.maxLength = MAX_TAG_LENGTH;
+    input.setAttribute('aria-label', `New name for #${entry.tag}`);
+
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.className = 'btn-ghost btn-sm';
+    renameBtn.textContent = 'Rename';
+    renameBtn.addEventListener('click', () => {
+      if (input.value.trim() !== entry.tag) renameTagEverywhere(entry.tag, input.value);
+      openTagManager();
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn-ghost btn-sm is-danger';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', () => {
+      deleteTagEverywhere(entry.tag);
+      openTagManager();
+    });
+
+    row.append(label, input, renameBtn, deleteBtn);
+    list.appendChild(row);
+  }
+  tagsDialog.showModal();
+}
+
+function wireTagManager() {
+  tagsManage.addEventListener('click', openTagManager);
+  tagsManageClose.addEventListener('click', () => tagsDialog.close());
+  tagsDialog.addEventListener('click', (event) => {
+    if (event.target === tagsDialog) tagsDialog.close();
+  });
+}
+
+/* ---------- Clear-filters empty state ---------- */
+
+function isFiltering() {
+  return Boolean(view.searchQuery.trim()) || Boolean(activeTag) || view.pinnedOnly;
+}
+
+function clearAllFilters() {
+  view.searchQuery = '';
+  repoSearch.value = '';
+  activeTag = null;
+  view.pinnedOnly = false;
+  renderAll();
+  scheduleSave();
+  showToast('Filters cleared');
+}
+
 /* ---------- Due-date reminders ---------- */
 
 const NOTIFIED_KEY = 'kanban-repo-cards.notified-on';
@@ -1562,7 +1914,7 @@ const NOTIFIED_KEY = 'kanban-repo-cards.notified-on';
 function collectDueRepos() {
   const today = localDateIso();
   const due = [];
-  for (const def of CARD_DEFS) {
+  for (const def of state.columns) {
     for (const repo of state.cards[def.id].repos) {
       if (repo.archived || !repo.dueDate || repo.dueDate > today) continue;
       due.push({
@@ -1744,7 +2096,7 @@ function wireRowContextMenu() {
 /* ---------- Boot ---------- */
 
 function buildColumns() {
-  for (const def of CARD_DEFS) {
+  for (const def of state.columns) {
     const node = columnTemplate.content.firstElementChild.cloneNode(true);
     node.dataset.cardId = def.id;
     node.classList.add(`accent-${def.accent}`);
@@ -1757,6 +2109,10 @@ function buildColumns() {
     const colorBtn = node.querySelector('.column-color');
     colorBtn.setAttribute('aria-label', `Change color of ${def.label}`);
     colorBtn.addEventListener('click', () => openCardColorPop(def.id, colorBtn));
+
+    const editBtn = node.querySelector('.column-edit');
+    editBtn.setAttribute('aria-label', `Edit or remove ${def.label}`);
+    editBtn.addEventListener('click', () => openColumnDialog(def.id));
 
     const importBtn = node.querySelector('.column-import');
     importBtn.setAttribute('aria-label', `Import public repositories for ${def.label} from GitHub`);
@@ -1868,6 +2224,8 @@ function init() {
     showToast('Showing every account');
   });
 
+  document.getElementById('account-add').addEventListener('click', () => openColumnDialog(null));
+
   window.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'f') {
       event.preventDefault();
@@ -1886,7 +2244,7 @@ function init() {
 
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'n') {
       event.preventDefault();
-      refs.get(CARD_DEFS[0].id)?.input.focus();
+      refs.get(state.columns[0].id)?.input.focus();
     }
   });
 
@@ -1908,11 +2266,11 @@ function init() {
         return;
       }
       const columnIndex = Number(event.key) - 1;
-      if (columnIndex >= 0 && columnIndex < CARD_DEFS.length) {
+      if (columnIndex >= 0 && columnIndex < state.columns.length) {
         event.preventDefault();
-        const entry = refs.get(CARD_DEFS[columnIndex].id);
-        if (openCardId !== null && openCardId !== CARD_DEFS[columnIndex].id) {
-          openCardId = CARD_DEFS[columnIndex].id;
+        const entry = refs.get(state.columns[columnIndex].id);
+        if (openCardId !== null && openCardId !== state.columns[columnIndex].id) {
+          openCardId = state.columns[columnIndex].id;
           renderAll();
         }
         entry?.input.focus();
@@ -1934,6 +2292,8 @@ function init() {
 
   wireShortcutsDialog();
   wireRowContextMenu();
+  wireColumnDialog();
+  wireTagManager();
   notifyDueRepos();
 
   window.addEventListener('beforeunload', () => {

@@ -1461,6 +1461,131 @@ async function main() {
       JSON.stringify(migrated.titles)
     );
 
+    // ---- 19. Configurable columns, stats, tag manager, clear filters -------
+    // Add a column via the sidebar, rename it, then remove it.
+    const colFlow = await evaluate(`(() => {
+      const out = {};
+      document.getElementById('account-add').click();
+      const dialog = document.getElementById('column-dialog');
+      out.addDialogOpen = dialog.open;
+      const input = document.getElementById('column-label');
+      input.value = 'Side Projects';
+      document.getElementById('column-form').requestSubmit();
+      out.columnsAfterAdd = document.querySelectorAll('.column').length;
+      out.tilesAfterAdd = document.querySelectorAll('.account-tile').length;
+      const lastColumn = [...document.querySelectorAll('.column')].pop();
+      out.newTitle = lastColumn.querySelector('.column-title').textContent;
+      out.newId = lastColumn.dataset.cardId;
+      // rename via the column edit dialog
+      lastColumn.querySelector('.column-edit').click();
+      const input2 = document.getElementById('column-label');
+      out.renamePrefill = input2.value;
+      out.removeDisabled = document.getElementById('column-remove').disabled;
+      input2.value = 'Experiments';
+      document.getElementById('column-form').requestSubmit();
+      const renamed = [...document.querySelectorAll('.column')].pop();
+      out.renamedTitle = renamed.querySelector('.column-title').textContent;
+      // remove via the same dialog (empty column → enabled)
+      renamed.querySelector('.column-edit').click();
+      const removeBtn = document.getElementById('column-remove');
+      out.removeEnabledNow = !removeBtn.disabled;
+      removeBtn.click();
+      out.columnsAfterRemove = document.querySelectorAll('.column').length;
+      return out;
+    })()`);
+    await delay(600);
+
+    const colStored = await evaluate(`(() => {
+      const stored = JSON.parse(localStorage.getItem('${STORAGE_KEY}') || 'null');
+      return {
+        columns: (stored?.columns ?? []).map((col) => col.label),
+        cards: Object.keys(stored?.cards ?? {}),
+      };
+    })()`);
+    check(
+      'add account creates a fifth column and tile',
+      colFlow.addDialogOpen === true &&
+        colFlow.columnsAfterAdd === 5 &&
+        colFlow.tilesAfterAdd === 6 &&
+        colFlow.newTitle === 'Side Projects' &&
+        colFlow.newId === 'side-projects',
+      JSON.stringify(colFlow)
+    );
+    check(
+      'column edit dialog prefills and renames',
+      colFlow.renamePrefill === 'Side Projects' && colFlow.renamedTitle === 'Experiments',
+      JSON.stringify(colFlow)
+    );
+    check(
+      'empty column can be removed',
+      colFlow.removeDisabled === false && colFlow.removeEnabledNow === true && colFlow.columnsAfterRemove === 4,
+      JSON.stringify(colFlow)
+    );
+    check(
+      'column changes are persisted',
+      JSON.stringify(colStored.columns) === JSON.stringify(CARD_NAMES) &&
+        colStored.cards.length === 4,
+      JSON.stringify(colStored)
+    );
+
+    // Stats panel reflects the board.
+    const stats = await evaluate(`(() => {
+      const body = document.getElementById('stats-body');
+      return {
+        rows: body.querySelectorAll('.stats-row').length,
+        repos: body.querySelector('.stats-row .stats-value')?.textContent ?? '',
+      };
+    })()`);
+    check('stats panel renders', stats.rows >= 5 && stats.repos === '1', JSON.stringify(stats));
+
+    // Empty-state clear filters.
+    const clearFilters = await evaluate(`(() => {
+      const search = document.getElementById('repo-search');
+      search.value = 'zzzz-no-match';
+      search.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      const clearBtn = document.querySelector('.column[data-card-id=\"michaeldaniel\"] .empty-clear');
+      const shown = Boolean(clearBtn);
+      if (clearBtn) clearBtn.click();
+      return {
+        shown,
+        searchAfter: document.getElementById('repo-search').value,
+      };
+    })()`);
+    await delay(600);
+    check(
+      'empty state offers Clear filters and it works',
+      clearFilters.shown === true && clearFilters.searchAfter === '',
+      JSON.stringify(clearFilters)
+    );
+
+    // Tag manager: rename the migrated 'old' tag everywhere.
+    await evaluate(`(() => {
+      document.getElementById('tag-manage').click();
+      const dialog = document.getElementById('tags-dialog');
+      const row = dialog.querySelector('.tags-manage-row');
+      const input = row.querySelector('.tags-manage-input');
+      input.value = 'archived-tag';
+      row.querySelectorAll('button')[0].click();
+      return true;
+    })()`);
+    await delay(600);
+
+    const tagFlow = await evaluate(`(() => {
+      const stored = JSON.parse(localStorage.getItem('${STORAGE_KEY}') || 'null');
+      const tags = stored?.cards?.michaeldaniel?.repos?.[0]?.tags ?? [];
+      const chipNames = [...document.querySelectorAll('.tag-filter span:first-child')].map(
+        (span) => span.textContent
+      );
+      return { tags, chipNames };
+    })()`);
+    check(
+      'tag manager renames a tag everywhere',
+      JSON.stringify(tagFlow.tags) === JSON.stringify(['archived-tag']) &&
+        tagFlow.chipNames.some((text) => text === '#archived-tag'),
+      JSON.stringify(tagFlow)
+    );
+    await evaluate(`document.getElementById('tags-dialog').close()`);
+
     // ---- 18. Console cleanliness ----------------------------------------------
     check(
       'the renderer logs no console errors',
