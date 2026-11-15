@@ -1276,6 +1276,62 @@ async function main() {
       reloaded.sidebarCount
     );
 
+    // ---- 15b. Undo, context menu, shortcuts cheat sheet --------------------
+    const undoState = await evaluate(`(() => {
+      const column = document.querySelector('.column[data-card-id=\"mikelb\"]');
+      const before = column.querySelectorAll('.repo').length;
+      const row = column.querySelector('.repo');
+      const name = row.querySelector('.repo-title').textContent;
+      row.querySelector('.repo-remove').click();
+      const afterRemove = column.querySelectorAll('.repo').length;
+      const undo = document.querySelector('#toast .toast-action');
+      const hadUndo = Boolean(undo);
+      if (undo) undo.click();
+      return { before, afterRemove, hadUndo, afterUndo: column.querySelectorAll('.repo').length, name };
+    })()`);
+    await delay(600);
+
+    const undoStored = await evaluate(`(() => {
+      const stored = JSON.parse(localStorage.getItem('${STORAGE_KEY}') || 'null');
+      return (stored?.cards?.mikelb?.repos ?? []).length;
+    })()`);
+    check('removing a repo offers Undo', undoState.hadUndo, JSON.stringify(undoState));
+    check(
+      'Undo restores the removed repo',
+      undoState.before === 1 && undoState.afterRemove === 0 && undoState.afterUndo === 1 && undoStored === 1,
+      `${JSON.stringify(undoState)} stored=${undoStored}`
+    );
+
+    const contextState = await evaluate(`(() => {
+      const row = document.querySelector('.column[data-card-id=\"mikelb\"] .repo');
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+      const menu = document.getElementById('row-menu');
+      const labels = [...menu.querySelectorAll('.row-menu-item')].map((item) => item.textContent);
+      return { visible: !menu.hidden, labels };
+    })()`);
+    check(
+      'right-click opens the row context menu',
+      contextState.visible && contextState.labels.includes('Pin') && contextState.labels.includes('Remove'),
+      JSON.stringify(contextState)
+    );
+
+    await evaluate(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+    const contextClosed = await evaluate(`document.getElementById('row-menu').hidden`);
+    check('clicking elsewhere closes the context menu', contextClosed === true);
+
+    const cheat = await evaluate(`(() => {
+      document.activeElement?.blur();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
+      const dialog = document.getElementById('shortcuts-dialog');
+      return { open: dialog.open, rows: dialog.querySelectorAll('.shortcut-row').length };
+    })()`);
+    check(
+      '? opens the keyboard cheat sheet',
+      cheat.open === true && cheat.rows >= 5,
+      JSON.stringify(cheat)
+    );
+    await evaluate(`document.getElementById('shortcuts-dialog').close()`);
+
     // ---- 16. Screenshots ----------------------------------------------------
     await evaluate(`(() => {
       document.documentElement.dataset.theme = 'dark';

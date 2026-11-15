@@ -108,6 +108,19 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <div class="row-menu" id="row-menu" role="menu" hidden></div>
+
+    <dialog class="shortcuts-dialog" id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+      <header class="dialog-head">
+        <div>
+          <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+          <p class="dialog-sub">Faster ways around the board.</p>
+        </div>
+        <button class="dialog-close" id="shortcuts-close" type="button" aria-label="Close">&times;</button>
+      </header>
+      <ul class="shortcuts-list" id="shortcuts-list"></ul>
+    </dialog>
+
     <!-- Account column -->
     <template id="column-template">
       <section class="column">

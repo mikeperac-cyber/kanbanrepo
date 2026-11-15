@@ -55,6 +55,10 @@ const bridge = window.api ?? {
   // instead of showing a value that drifts from package.json.
   appInfo: async () => ({}),
   fetchGithubRepos: async () => [],
+  exportBoard: async () => ({ ok: false, cancelled: true }),
+  importBoard: async () => ({ ok: false, cancelled: true }),
+  onMenuExport: () => {},
+  onMenuImport: () => {},
 };
 
 let state;
@@ -462,11 +466,30 @@ function setStatus(text, stateName = 'saved') {
   statusEl.dataset.state = stateName;
 }
 
-function showToast(message) {
+function showToast(message, action = null) {
   toastEl.textContent = message;
+  // Drop any previous action button before (re)showing.
+  const existing = toastEl.querySelector('.toast-action');
+  if (existing) existing.remove();
+  if (action && typeof action.run === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'toast-action';
+    button.textContent = action.label || 'Undo';
+    button.addEventListener('click', () => {
+      window.clearTimeout(toastTimer);
+      toastEl.classList.remove('show');
+      button.remove();
+      action.run();
+    });
+    toastEl.appendChild(button);
+  }
   toastEl.classList.add('show');
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toastEl.classList.remove('show'), 2300);
+  toastTimer = window.setTimeout(() => {
+    toastEl.classList.remove('show');
+    toastEl.querySelector('.toast-action')?.remove();
+  }, action ? 6000 : 2300);
 }
 
 async function openUrl(url) {
@@ -963,17 +986,35 @@ function handleAdd(event, def) {
   else showToast(`Added to ${def.label}`);
 }
 
+let lastDeleted = null; // { cardId, repo, index, todoIndex } for Undo
+
 function removeRepo(cardId, repoId) {
   const def = CARD_DEFS.find((item) => item.id === cardId);
   const repos = state.cards[cardId].repos;
   const index = repos.findIndex((repo) => repo.id === repoId);
   if (!def || index === -1) return;
 
-  repos.splice(index, 1);
+  const [repo] = repos.splice(index, 1);
   refs.get(cardId)?.expanded.delete(repoId);
+  lastDeleted = { cardId, repo, index, todoIndex: null };
   renderAll();
   scheduleSave();
-  showToast(`Removed from ${def.label}`);
+  showToast(`Removed from ${def.label}`, {
+    label: 'Undo',
+    run: () => restoreLastDeleted(),
+  });
+}
+
+function restoreLastDeleted() {
+  if (!lastDeleted) return;
+  const { cardId, repo, index } = lastDeleted;
+  lastDeleted = null;
+  const repos = state.cards[cardId]?.repos;
+  if (!repos) return;
+  repos.splice(Math.min(index, repos.length), 0, repo);
+  renderAll();
+  scheduleSave();
+  showToast('Restored');
 }
 
 function toggleRepoPin(cardId, repoId) {
@@ -1033,10 +1074,27 @@ function toggleTodo(cardId, repoId, todoId) {
 function removeTodo(cardId, repoId, todoId) {
   const repo = findRepo(cardId, repoId);
   if (!repo) return;
-  repo.todos = repo.todos.filter((todo) => todo.id !== todoId);
+  const todoIndex = repo.todos.findIndex((todo) => todo.id === todoId);
+  if (todoIndex === -1) return;
+  const [todo] = repo.todos.splice(todoIndex, 1);
   repo.updatedAt = nowIso();
+  lastDeleted = { cardId, repo, index: null, todoIndex, todo };
   renderColumn(cardId);
   scheduleSave();
+  showToast('Task deleted', {
+    label: 'Undo',
+    run: () => {
+      const target = lastDeleted ? findRepo(lastDeleted.cardId, lastDeleted.repo.id) : null;
+      const restore = lastDeleted;
+      lastDeleted = null;
+      if (!target || !restore?.todo) return;
+      target.todos.splice(Math.min(restore.todoIndex, target.todos.length), 0, restore.todo);
+      target.updatedAt = nowIso();
+      renderColumn(cardId);
+      scheduleSave();
+      showToast('Task restored');
+    },
+  });
 }
 
 async function importGithubRepos(cardId, button) {
@@ -1446,6 +1504,158 @@ async function initAppInfo() {
   }
 }
 
+/* ---------- Board backup ---------- */
+
+async function exportBoard() {
+  try {
+    const result = await bridge.exportBoard(JSON.stringify(state, null, 2));
+    if (result?.ok) showToast('Board backup saved');
+    else if (result && !result.cancelled) showToast(`Export failed: ${result.error || 'unknown error'}`);
+  } catch {
+    showToast('Export failed — could not reach the save dialog');
+  }
+}
+
+async function importBoard() {
+  try {
+    const result = await bridge.importBoard();
+    if (!result?.ok) {
+      if (result && !result.cancelled) showToast(`Import failed: ${result.error || 'unknown error'}`);
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(result.json);
+    } catch {
+      showToast('Import failed — that file is not valid JSON');
+      return;
+    }
+    const repoCount = Object.values(parsed?.cards ?? {}).reduce(
+      (total, card) => total + (Array.isArray(card?.repos) ? card.repos.length : 0),
+      0
+    );
+    if (
+      repoCount > 0 &&
+      state.cards &&
+      Object.values(state.cards).some((card) => card.repos.length > 0) &&
+      !window.confirm(`Replace the current board with ${repoCount} repos from the backup?`)
+    ) {
+      return;
+    }
+    const migratedBefore = migratedFromLegacy;
+    state = sanitizeState(parsed);
+    migratedFromLegacy = migratedBefore;
+    view = state.view;
+    repoSearch.value = view.searchQuery;
+    repoSort.value = view.sortBy;
+    for (const [cardId, entry] of refs) {
+      entry.expanded.clear();
+      if (state.cards[cardId].color) {
+        entry.node.style.setProperty('--column-accent', state.cards[cardId].color);
+        entry.node.style.setProperty('--column-accent-soft', hexToRgba(state.cards[cardId].color, 0.16));
+      } else {
+        entry.node.style.removeProperty('--column-accent');
+        entry.node.style.removeProperty('--column-accent-soft');
+      }
+    }
+    renderAll();
+    persistNow();
+    showToast(`Imported ${repoCount} repos`);
+  } catch {
+    showToast('Import failed — could not read that file');
+  }
+}
+
+/* ---------- Keyboard cheat sheet ---------- */
+
+const SHORTCUTS = [
+  ['Ctrl+F', 'Search repos, notes, and tasks'],
+  ['Ctrl+N', 'Jump to the first add field'],
+  ['Ctrl+P', 'Toggle pinned-only view'],
+  ['Ctrl+1…4', 'Focus an account column'],
+  ['Esc', 'Clear search / close dialogs'],
+  ['?', 'This cheat sheet'],
+];
+
+function openShortcutsDialog() {
+  const list = document.getElementById('shortcuts-list');
+  list.textContent = '';
+  for (const [keys, description] of SHORTCUTS) {
+    const row = document.createElement('li');
+    row.className = 'shortcut-row';
+    const key = document.createElement('kbd');
+    key.textContent = keys;
+    const label = document.createElement('span');
+    label.textContent = description;
+    row.append(key, label);
+    list.appendChild(row);
+  }
+  document.getElementById('shortcuts-dialog').showModal();
+}
+
+function wireShortcutsDialog() {
+  const dialog = document.getElementById('shortcuts-dialog');
+  document.getElementById('shortcuts-close').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+}
+
+/* ---------- Row context menu ---------- */
+
+function closeRowMenu() {
+  const menu = document.getElementById('row-menu');
+  menu.hidden = true;
+}
+
+function openRowMenu(event, cardId, repoId) {
+  const repo = findRepo(cardId, repoId);
+  if (!repo) return;
+  event.preventDefault();
+  const menu = document.getElementById('row-menu');
+  const items = [
+    ['Open in browser', () => openUrl(repo.url)],
+    ['Edit details…', () => openRepoDialog(cardId, repo.id)],
+    [repo.pinned ? 'Unpin' : 'Pin', () => toggleRepoPin(cardId, repo.id)],
+    [repo.archived ? 'Restore' : 'Archive', () => toggleRepoArchive(cardId, repo.id)],
+    ['Remove', () => removeRepo(cardId, repo.id)],
+  ];
+  menu.textContent = '';
+  for (const [label, run] of items) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'row-menu-item' + (label === 'Remove' ? ' is-danger' : '');
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      closeRowMenu();
+      run();
+    });
+    menu.appendChild(button);
+  }
+  menu.hidden = false;
+  const menuRect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - menuRect.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - menuRect.height - 8)}px`;
+}
+
+function wireRowContextMenu() {
+  board.addEventListener('contextmenu', (event) => {
+    const row = event.target.closest?.('.repo');
+    if (!row) return;
+    const column = event.target.closest?.('.column');
+    if (!column) return;
+    openRowMenu(event, column.dataset.cardId, row.dataset.repoId);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest?.('#row-menu')) closeRowMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeRowMenu();
+  });
+  window.addEventListener('blur', closeRowMenu);
+  window.addEventListener('resize', closeRowMenu);
+}
+
 /* ---------- Boot ---------- */
 
 function buildColumns() {
@@ -1598,6 +1808,47 @@ function init() {
   // Never let the window navigate to a dropped file/link.
   window.addEventListener('dragover', (event) => event.preventDefault());
   window.addEventListener('drop', (event) => event.preventDefault());
+
+  // File menu → board backup.
+  bridge.onMenuExport(exportBoard);
+  bridge.onMenuImport(importBoard);
+
+  // Extra keyboard shortcuts: Ctrl+P pinned-only, Ctrl+1..4 focus a column's
+  // add field, ? opens the cheat sheet (when not typing).
+  window.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
+      if (event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        pinnedToggle.click();
+        return;
+      }
+      const columnIndex = Number(event.key) - 1;
+      if (columnIndex >= 0 && columnIndex < CARD_DEFS.length) {
+        event.preventDefault();
+        const entry = refs.get(CARD_DEFS[columnIndex].id);
+        if (openCardId !== null && openCardId !== CARD_DEFS[columnIndex].id) {
+          openCardId = CARD_DEFS[columnIndex].id;
+          renderAll();
+        }
+        entry?.input.focus();
+        return;
+      }
+    }
+    if (
+      event.key === '?' &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName ?? '') &&
+      !document.activeElement?.isContentEditable
+    ) {
+      event.preventDefault();
+      openShortcutsDialog();
+    }
+  });
+
+  wireShortcutsDialog();
+  wireRowContextMenu();
 
   window.addEventListener('beforeunload', () => {
     // Only flush pending edits; otherwise leave storage alone so an

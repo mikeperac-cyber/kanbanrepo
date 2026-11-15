@@ -15,6 +15,10 @@ A local Windows desktop board for organizing repositories across four GitHub acc
 - Drag a repo between columns or drop a web link onto a column
 - Import public repos from GitHub on demand; existing local repos and notes are preserved
 - Dark and light themes, keyboard shortcuts, and local-only board storage
+- **Undo** for removed repos and deleted checklist tasks (via the toast)
+- **Export / import board backups** as JSON — File menu, or Ctrl+Shift+S / Ctrl+Shift+O
+- **Right-click context menu** on any repo row (open, edit, pin, archive, remove)
+- Keyboard cheat sheet: press **?**; Ctrl+P toggles pinned-only; Ctrl+1–4 focus a column
 
 ## Requirements
 

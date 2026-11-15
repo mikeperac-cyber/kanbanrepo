@@ -11,6 +11,7 @@ const {
   shell,
 } = require('electron');
 const path = require('node:path');
+const fsPromises = require('node:fs/promises');
 
 const APP_ID = 'com.mikedaniel.kanbanrepocards';
 const APP_NAME = 'Kanban Repo Cards';
@@ -142,11 +143,30 @@ function showAbout() {
   });
 }
 
+function sendToWindow(channel) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel);
+  }
+}
+
 function buildMenu() {
   const template = [
     {
       label: 'File',
-      submenu: [{ label: 'Exit', accelerator: 'Alt+F4', click: () => app.quit() }],
+      submenu: [
+        {
+          label: 'Export board (JSON)…',
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: () => sendToWindow('menu:export-board'),
+        },
+        {
+          label: 'Import board (JSON)…',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => sendToWindow('menu:import-board'),
+        },
+        { type: 'separator' },
+        { label: 'Exit', accelerator: 'Alt+F4', click: () => app.quit() },
+      ],
     },
     {
       label: 'Edit',
@@ -190,6 +210,39 @@ ipcMain.handle('app-info', () => ({
   electron: process.versions.electron,
   store: Boolean(process.windowsStore),
 }));
+
+/* ---------- Board backup: export / import ---------- */
+
+ipcMain.handle('board:export', async (_event, json) => {
+  if (typeof json !== 'string' || !json) return { ok: false, cancelled: true };
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export board',
+    defaultPath: `kanban-board-${new Date().toISOString().slice(0, 10)}.json`,
+    filters: [{ name: 'Board backup (JSON)', extensions: ['json'] }],
+  });
+  if (result.canceled || !result.filePath) return { ok: false, cancelled: true };
+  try {
+    await fsPromises.writeFile(result.filePath, json, 'utf8');
+    return { ok: true, path: result.filePath };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle('board:import', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import board',
+    filters: [{ name: 'Board backup (JSON)', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return { ok: false, cancelled: true };
+  try {
+    const json = await fsPromises.readFile(result.filePaths[0], 'utf8');
+    return { ok: true, json };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
 
 // GitHub API integration — fetch repos for a username.
 const GITHUB_USERNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
